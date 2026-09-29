@@ -5,12 +5,14 @@ import { extname, join, normalize } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { z } from "zod";
 import { applyOps, OpSchema } from "../shared/ops";
+import { TurnError, TurnManager } from "./turns";
 import { SceneStore, type Scene } from "./store";
 
 export interface CanvasServerOptions {
   dataDir: string;
   port: number;
   staticDir?: string;
+  yieldTimeoutMs?: number;
 }
 
 export interface CanvasServer {
@@ -21,6 +23,16 @@ export interface CanvasServer {
 export async function startCanvasServer(opts: CanvasServerOptions): Promise<CanvasServer> {
   const store = new SceneStore(opts.dataDir);
 
+  const turns = new TurnManager({
+    dataDir: opts.dataDir,
+    getElements: () => store.get().elements as Record<string, any>[],
+    onChange: (state) => {
+      const msg = JSON.stringify({ type: "turn", ...state });
+      for (const c of wss.clients) if (c.readyState === c.OPEN) c.send(msg);
+    },
+    defaultTimeoutMs: opts.yieldTimeoutMs ?? 90_000,
+  });
+
   const wss = new WebSocketServer({ noServer: true });
   const sceneMessage = () => JSON.stringify({ type: "scene", ...store.get() });
   const broadcast = (except?: WebSocket) => {
@@ -30,6 +42,7 @@ export async function startCanvasServer(opts: CanvasServerOptions): Promise<Canv
 
   wss.on("connection", (ws) => {
     ws.send(sceneMessage());
+    ws.send(JSON.stringify({ type: "turn", ...turns.state() }));
     ws.on("message", (data) => {
       try {
         const m = JSON.parse(String(data));
@@ -51,6 +64,12 @@ export async function startCanvasServer(opts: CanvasServerOptions): Promise<Canv
 
   const http: Server = createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/health") return json(res, 200, { ok: true });
+    if (req.method === "GET" && req.url?.startsWith("/api/diff")) {
+      const raw = new URL(req.url, "http://x").searchParams.get("since");
+      const result = turns.diffSince(raw === null ? undefined : Number(raw));
+      return result ? json(res, 200, result) : json(res, 404, { error: `no snapshot for turn ${raw}` });
+    }
+    if (req.method === "GET" && req.url === "/api/turn") return json(res, 200, turns.state());
     if (req.method === "POST" && req.url === "/api/ops") {
       let body: unknown;
       try {
@@ -69,6 +88,23 @@ export async function startCanvasServer(opts: CanvasServerOptions): Promise<Canv
       store.set({ ...scene, elements: result.elements });
       broadcast();
       return json(res, 200, { ok: true });
+    }
+    if (req.method === "POST" && (req.url === "/api/turn/yield" || req.url === "/api/turn/respond")) {
+      let body: { message?: string; timeoutMs?: number; kind?: string; comment?: string };
+      try {
+        body = JSON.parse((await readBody(req)) || "{}");
+      } catch {
+        return json(res, 400, { error: "invalid JSON" });
+      }
+      try {
+        if (req.url === "/api/turn/yield") return json(res, 200, await turns.yield(body.message, body.timeoutMs));
+        if (body.kind !== "turn" && body.kind !== "agree") return json(res, 400, { error: 'kind must be "turn" or "agree"' });
+        turns.respond(body.kind, body.comment);
+        return json(res, 200, { ok: true });
+      } catch (err) {
+        if (err instanceof TurnError) return json(res, 409, { error: err.message });
+        throw err;
+      }
     }
     if (req.url === "/api/scene") {
       if (req.method === "GET") return json(res, 200, store.get());

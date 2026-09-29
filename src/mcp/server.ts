@@ -4,7 +4,7 @@ import { diffScenes } from "../shared/diff";
 import { formatDiff, formatScene } from "../shared/format";
 import { OpSchema } from "../shared/ops";
 import { extractScene } from "../shared/scene";
-import { ensureCanvas, fetchElements, postOps } from "./canvas";
+import { ensureCanvas, fetchDiff, fetchElements, postOps, yieldTurn } from "./canvas";
 
 const text = (t: string, isError = false) => ({ content: [{ type: "text" as const, text: t }], ...(isError ? { isError } : {}) });
 
@@ -49,6 +49,36 @@ export function createMcpServer(root: string): McpServer {
       const after = extractScene(await fetchElements(url));
       const warnings = after.warnings.length ? `warnings:\n${after.warnings.map((w) => `  - ${w}`).join("\n")}\n` : "";
       return text(`Applied ${ops.length} op(s).\n${formatDiff(diffScenes(before, after))}${warnings}`);
+    },
+  );
+
+  server.registerTool(
+    "yield_turn",
+    {
+      description:
+        "Hand the whiteboard to the user. Shows `message` in the canvas side panel and BLOCKS until the user presses 'Your turn' or 'Agree' (with an optional typed comment). Returns {status:'done', turn, agreed, user_comment, diff_since_last_turn} where the diff is what the user changed while you waited. If it returns {status:'still_waiting'} the user has not responded yet: call yield_turn again with NO message to keep waiting on the same turn. Never treat the design as agreed until agreed is true.",
+      inputSchema: { message: z.string().min(1).optional().describe("What you want the user to look at or answer. Omit to keep waiting on an open turn.") },
+    },
+    async ({ message }) => {
+      const { url } = await ensureCanvas(root);
+      const { status, body } = await yieldTurn(url, message);
+      if (status !== 200) return text(`${body.error ?? "yield failed"}\n`, true);
+      return text(JSON.stringify(body, null, 2));
+    },
+  );
+
+  server.registerTool(
+    "get_diff",
+    {
+      description:
+        "Semantic diff between the whiteboard as you left it at the start of turn `since_turn` (your last yield_turn if omitted; 0 = empty board) and the board right now. Position and style changes are ignored.",
+      inputSchema: { since_turn: z.number().int().min(0).optional() },
+    },
+    async ({ since_turn }) => {
+      const { url } = await ensureCanvas(root);
+      const { status, body } = await fetchDiff(url, since_turn);
+      if (status !== 200) return text(`${body.error ?? "diff failed"}\n`, true);
+      return text(body.diff);
     },
   );
 

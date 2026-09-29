@@ -1,20 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { startCanvasServer, type CanvasServer } from "../src/server/server";
+import { closeAll, connect, start } from "./helpers";
 
-let running: CanvasServer[] = [];
-afterEach(async () => {
-  await Promise.all(running.map((s) => s.close()));
-  running = [];
-});
-
-async function start(dataDir = mkdtempSync(join(tmpdir(), "sketchpact-"))) {
-  const s = await startCanvasServer({ dataDir, port: 0 });
-  running.push(s);
-  return { s, dataDir, base: `http://127.0.0.1:${s.port}` };
-}
+afterEach(closeAll);
 
 describe("canvas server", () => {
   it("reports health on the loopback interface", async () => {
@@ -41,7 +28,7 @@ describe("canvas server", () => {
     expect(put.status).toBe(200);
     await first.s.close();
 
-    const second = await start(first.dataDir);
+    const second = await start({ dataDir: first.dataDir });
     const scene = await (await fetch(`${second.base}/api/scene`)).json();
     expect(scene.elements).toEqual(elements);
   });
@@ -56,11 +43,11 @@ describe("canvas server", () => {
 
     const a = await connect(s.port);
     const b = await connect(s.port);
-    expect((await a.next()).elements).toEqual([{ id: "a" }]);
-    expect((await b.next()).elements).toEqual([{ id: "a" }]);
+    expect((await a.nextOfType("scene")).elements).toEqual([{ id: "a" }]);
+    expect((await b.nextOfType("scene")).elements).toEqual([{ id: "a" }]);
 
     a.send({ type: "update", scene: { elements: [{ id: "a" }, { id: "b" }] } });
-    const relayed = await b.next();
+    const relayed = await b.nextOfType("scene");
     expect(relayed.type).toBe("scene");
     expect(relayed.elements).toEqual([{ id: "a" }, { id: "b" }]);
 
@@ -73,43 +60,13 @@ describe("canvas server", () => {
   it("pushes API-written scenes to connected WebSocket clients", async () => {
     const { s, base } = await start();
     const c = await connect(s.port);
-    await c.next();
+    await c.nextOfType("scene");
     await fetch(`${base}/api/scene`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ elements: [{ id: "z" }] }),
     });
-    expect((await c.next()).elements).toEqual([{ id: "z" }]);
+    expect((await c.nextOfType("scene")).elements).toEqual([{ id: "z" }]);
     c.close();
   });
 });
-
-async function connect(port: number) {
-  const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
-  const queue: any[] = [];
-  const waiters: ((m: any) => void)[] = [];
-  ws.addEventListener("message", (e) => {
-    const m = JSON.parse(String(e.data));
-    const w = waiters.shift();
-    if (w) w(m);
-    else queue.push(m);
-  });
-  await new Promise<void>((resolve, reject) => {
-    ws.addEventListener("open", () => resolve());
-    ws.addEventListener("error", () => reject(new Error("ws error")));
-  });
-  return {
-    next: () =>
-      new Promise<any>((resolve, reject) => {
-        const m = queue.shift();
-        if (m) return resolve(m);
-        const t = setTimeout(() => reject(new Error("timeout waiting for ws message")), 2000);
-        waiters.push((x) => {
-          clearTimeout(t);
-          resolve(x);
-        });
-      }),
-    send: (m: unknown) => ws.send(JSON.stringify(m)),
-    close: () => ws.close(),
-  };
-}

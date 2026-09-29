@@ -6,15 +6,16 @@ import { startCanvasServer } from "./server";
 const root = process.env.SKETCHPACT_ROOT ?? process.cwd();
 const dataDir = resolve(root, ".sketchpact");
 const preferred = Number(process.env.SKETCHPACT_PORT ?? 3210);
+const yieldTimeoutMs = Math.min(240_000, Math.round(Number(process.env.SKETCHPACT_YIELD_TIMEOUT_S ?? 90) * 1000));
 const staticDir = resolve(dirname(fileURLToPath(import.meta.url)), "../../dist/web");
 
 async function main() {
   let server;
   try {
-    server = await startCanvasServer({ dataDir, port: preferred, staticDir });
+    server = await startCanvasServer({ dataDir, port: preferred, staticDir, yieldTimeoutMs });
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "EADDRINUSE") throw err;
-    server = await startCanvasServer({ dataDir, port: 0, staticDir });
+    server = await startCanvasServer({ dataDir, port: 0, staticDir, yieldTimeoutMs });
   }
   mkdirSync(dataDir, { recursive: true });
   writeFileSync(

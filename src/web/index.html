@@ -6,6 +6,24 @@
     <title>Sketchpact</title>
     <style>
       html, body, #root { margin: 0; height: 100%; }
+      .layout { display: flex; height: 100%; font-family: system-ui, sans-serif; }
+      .canvas { flex: 1; min-width: 0; }
+      .panel { width: 320px; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; padding: 16px; border-left: 1px solid #d0d0d8; background: #f8f8fb; color: #1e1e24; }
+      .panel-turn { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: #6b6b78; }
+      .panel-status { font-weight: 600; }
+      .panel-status.phase-user { color: #1b6ec2; }
+      .panel-status.phase-agreed { color: #1a7f4b; }
+      .panel-message { flex: 1; overflow: auto; white-space: pre-wrap; line-height: 1.45; background: #fff; border: 1px solid #e0e0e8; border-radius: 8px; padding: 12px; }
+      .panel textarea { min-height: 84px; resize: vertical; padding: 8px; border: 1px solid #c8c8d2; border-radius: 6px; font: inherit; }
+      .panel-buttons { display: flex; gap: 8px; }
+      .panel button { flex: 1; padding: 10px; border-radius: 6px; border: 1px solid #1b6ec2; background: #1b6ec2; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+      .panel button.agree { background: #1a7f4b; border-color: #1a7f4b; }
+      .panel button:disabled, .panel textarea:disabled { opacity: .45; cursor: not-allowed; }
+      @media (prefers-color-scheme: dark) {
+        .panel { background: #1e1e24; color: #ececf2; border-left-color: #383842; }
+        .panel-message { background: #26262e; border-color: #383842; }
+        .panel textarea { background: #26262e; color: inherit; border-color: #45454f; }
+      }
     </style>
   </head>
   <body>

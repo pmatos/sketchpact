@@ -94,3 +94,17 @@ export async function postOps(url: string, ops: Op[]): Promise<{ ok: true } | { 
   });
   return (await res.json()) as { ok: true } | { ok: false; errors: OpError[] };
 }
+
+export async function yieldTurn(url: string, message?: string): Promise<{ status: number; body: any }> {
+  const res = await fetch(`${url}/api/turn/yield`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(message === undefined ? {} : { message }),
+  });
+  return { status: res.status, body: await res.json() };
+}
+
+export async function fetchDiff(url: string, since?: number): Promise<{ status: number; body: any }> {
+  const res = await fetch(`${url}/api/diff${since === undefined ? "" : `?since=${since}`}`);
+  return { status: res.status, body: await res.json() };
+}
