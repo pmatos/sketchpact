@@ -36,7 +36,7 @@ type El = Record<string, any>;
 
 const KINDS: Record<string, NodeKind> = { rectangle: "rect", ellipse: "ellipse", diamond: "diamond" };
 
-const idOf = (el: El): string => el.customData?.sketchpactId ?? el.id;
+export const idOf = (el: El): string => el.customData?.sketchpactId ?? el.id;
 
 export function extractScene(elements: readonly El[]): Scene {
   const live = elements.filter((e) => !e.isDeleted);

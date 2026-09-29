@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "sketchpact": {
+      "command": "node",
+      "args": ["--import", "tsx", "src/mcp/main.ts"]
+    }
+  }
+}

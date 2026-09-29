@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Excalidraw } from "@excalidraw/excalidraw";
+import { Excalidraw, restoreElements } from "@excalidraw/excalidraw";
 
 type Api = {
   updateScene(data: { elements: unknown[] }): void;
   getSceneElements(): readonly unknown[];
+  scrollToContent(target: unknown, opts: { fit: boolean; viewportZoomFactor: number }): void;
 };
 
 export function App() {
@@ -11,6 +12,7 @@ export function App() {
   const ws = useRef<WebSocket | null>(null);
   const applyingRemote = useRef(false);
   const lastSent = useRef("");
+  const firstScene = useRef(true);
   const timer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
@@ -22,7 +24,12 @@ export function App() {
       if (msg.type !== "scene") return;
       applyingRemote.current = true;
       lastSent.current = JSON.stringify(msg.elements);
-      api.updateScene({ elements: msg.elements });
+      const restored = restoreElements(msg.elements, null);
+      api.updateScene({ elements: restored });
+      if (firstScene.current && restored.length) {
+        firstScene.current = false;
+        api.scrollToContent(restored, { fit: true, viewportZoomFactor: 0.8 });
+      }
       queueMicrotask(() => (applyingRemote.current = false));
     };
     return () => socket.close();

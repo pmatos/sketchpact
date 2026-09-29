@@ -3,6 +3,8 @@ import type { AddressInfo } from "node:net";
 import { existsSync, readFileSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
+import { z } from "zod";
+import { applyOps, OpSchema } from "../shared/ops";
 import { SceneStore, type Scene } from "./store";
 
 export interface CanvasServerOptions {
@@ -49,6 +51,25 @@ export async function startCanvasServer(opts: CanvasServerOptions): Promise<Canv
 
   const http: Server = createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/health") return json(res, 200, { ok: true });
+    if (req.method === "POST" && req.url === "/api/ops") {
+      let body: unknown;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch {
+        return json(res, 400, { ok: false, errors: [{ index: -1, message: "invalid JSON" }] });
+      }
+      const parsed = z.object({ ops: z.array(OpSchema) }).safeParse(body);
+      if (!parsed.success) {
+        const errors = parsed.error.issues.map((i) => ({ index: Number(i.path[1] ?? -1), message: `${i.path.slice(2).join(".") || "op"}: ${i.message}` }));
+        return json(res, 400, { ok: false, errors });
+      }
+      const scene = store.get();
+      const result = applyOps(scene.elements as Record<string, any>[], parsed.data.ops);
+      if (!result.ok) return json(res, 422, result);
+      store.set({ ...scene, elements: result.elements });
+      broadcast();
+      return json(res, 200, { ok: true });
+    }
     if (req.url === "/api/scene") {
       if (req.method === "GET") return json(res, 200, store.get());
       if (req.method === "PUT") {
