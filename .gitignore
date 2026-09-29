@@ -1,0 +1,5 @@
+node_modules
+dist
+.sketchpact
+src/web/public/excalidraw-assets
+.playwright-mcp
