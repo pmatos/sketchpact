@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { excalidrawDocument } from "../shared/excalidraw-file";
 
 export interface Scene {
   elements: unknown[];
@@ -25,14 +26,7 @@ export class SceneStore {
 
   set(scene: Scene): void {
     this.scene = scene;
-    const doc = {
-      type: "excalidraw",
-      version: 2,
-      source: "sketchpact",
-      elements: scene.elements,
-      appState: scene.appState ?? {},
-      files: scene.files ?? {},
-    };
+    const doc = excalidrawDocument(scene);
     const tmp = `${this.file}.tmp`;
     writeFileSync(tmp, JSON.stringify(doc, null, 2));
     renameSync(tmp, this.file);

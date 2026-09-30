@@ -108,3 +108,11 @@ export async function fetchDiff(url: string, since?: number): Promise<{ status: 
   const res = await fetch(`${url}/api/diff${since === undefined ? "" : `?since=${since}`}`);
   return { status: res.status, body: await res.json() };
 }
+
+export async function fetchScene(url: string): Promise<{ elements: Record<string, any>[]; appState?: Record<string, unknown>; files?: Record<string, unknown> }> {
+  return (await fetch(`${url}/api/scene`)).json() as never;
+}
+
+export async function fetchTurn(url: string): Promise<{ turn: number; phase: string; message: string }> {
+  return (await fetch(`${url}/api/turn`)).json() as never;
+}

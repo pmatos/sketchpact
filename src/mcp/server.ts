@@ -4,7 +4,9 @@ import { diffScenes } from "../shared/diff";
 import { formatDiff, formatScene } from "../shared/format";
 import { OpSchema } from "../shared/ops";
 import { extractScene } from "../shared/scene";
-import { ensureCanvas, fetchDiff, fetchElements, postOps, yieldTurn } from "./canvas";
+import { excalidrawDocument } from "../shared/excalidraw-file";
+import { ensureCanvas, fetchDiff, fetchElements, fetchScene, fetchTurn, postOps, yieldTurn } from "./canvas";
+import { missingSections, REQUIRED_SECTIONS, writeDecision } from "./decisions";
 
 const text = (t: string, isError = false) => ({ content: [{ type: "text" as const, text: t }], ...(isError ? { isError } : {}) });
 
@@ -79,6 +81,33 @@ export function createMcpServer(root: string): McpServer {
       const { status, body } = await fetchDiff(url, since_turn);
       if (status !== 200) return text(`${body.error ?? "diff failed"}\n`, true);
       return text(body.diff);
+    },
+  );
+
+  server.registerTool(
+    "save_decision",
+    {
+      description: `Record the agreed design as docs/decisions/NNNN-<slug>.md plus the whiteboard saved next to it as .excalidraw. Only works after the user pressed Agree on the latest yield_turn. \`body\` is markdown and must contain these headings: ${REQUIRED_SECTIONS.join(", ")}. The tool adds the title, status, date and the semantic scene at agreement.`,
+      inputSchema: { title: z.string().min(1), body: z.string().min(1) },
+    },
+    async ({ title, body }) => {
+      const { url } = await ensureCanvas(root);
+      const turn = await fetchTurn(url);
+      if (turn.phase !== "agreed") {
+        return text(`The user has not agreed yet (turn phase: ${turn.phase}). Keep going with yield_turn until it returns agreed: true.\n`, true);
+      }
+      const missing = missingSections(body);
+      if (missing.length) return text(`Body is missing required sections: ${missing.join(", ")}. Nothing was written.\n`, true);
+      const scene = await fetchScene(url);
+      const written = writeDecision({
+        root,
+        title,
+        body,
+        turn: turn.turn,
+        sceneYaml: formatScene(extractScene(scene.elements)),
+        diagram: excalidrawDocument(scene),
+      });
+      return text(`Saved ${written.record} and ${written.diagram}\n`);
     },
   );
 

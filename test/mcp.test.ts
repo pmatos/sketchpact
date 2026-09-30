@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -39,7 +39,7 @@ describe("MCP server over stdio", () => {
   it("lists the tools", async () => {
     const { client } = await session();
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(["apply_ops", "get_diff", "get_scene", "open_canvas", "yield_turn"]);
+    expect(tools.map((t) => t.name).sort()).toEqual(["apply_ops", "get_diff", "get_scene", "open_canvas", "save_decision", "yield_turn"]);
   });
 
   it("auto-starts the canvas server on first use and reports its URL", async () => {
@@ -148,5 +148,83 @@ describe("MCP turn-taking over stdio", () => {
     expect(text(await client.callTool({ name: "get_diff", arguments: { since_turn: 1 } }))).toBe('+node x "X" (rect)\n');
     const missing = await client.callTool({ name: "get_diff", arguments: { since_turn: 9 } });
     expect(missing.isError).toBe(true);
+  });
+});
+
+describe("MCP save_decision over stdio", () => {
+  const BODY = [
+    "## Context",
+    "We need async work between the API and workers.",
+    "## Options considered",
+    "1. A message queue. 2. Polling the database.",
+    "## Decision",
+    "Use a message queue.",
+    "## Consequences",
+    "One more moving part to operate.",
+  ].join("\n");
+
+  async function agreedSession(env: Record<string, string> = {}) {
+    const s = await session(undefined, { SKETCHPACT_YIELD_TIMEOUT_S: "0.2", ...env });
+    await s.client.callTool({
+      name: "apply_ops",
+      arguments: { ops: [{ op: "add_node", id: "api", label: "API" }, { op: "add_node", id: "queue", label: "Queue" }, { op: "connect", from: "api", to: "queue", label: "enqueue" }] },
+    });
+    await s.client.callTool({ name: "yield_turn", arguments: { message: "Agree?" } });
+    const { url } = serverInfo(s.root);
+    await fetch(`${url}/api/turn/respond`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ kind: "agree" }) });
+    return s;
+  }
+  const save = (client: Client, title: string, body = BODY) => client.callTool({ name: "save_decision", arguments: { title, body } });
+
+  it("refuses to record a decision the user has not agreed to, and writes nothing", async () => {
+    const { client, root } = await session(undefined, { SKETCHPACT_YIELD_TIMEOUT_S: "0.2" });
+    const none = await save(client, "Use a queue");
+    expect(none.isError).toBe(true);
+    expect(text(none)).toContain("not agreed");
+
+    await client.callTool({ name: "yield_turn", arguments: { message: "Thoughts?" } });
+    expect((await save(client, "Use a queue")).isError).toBe(true);
+    expect(existsSync(join(root, "docs", "decisions"))).toBe(false);
+  });
+
+  it("writes the record and the diagram side by side once the user has agreed", async () => {
+    const { client, root } = await agreedSession();
+    const r = await save(client, "Use a message queue between API and workers");
+    expect(r.isError).toBeFalsy();
+
+    const md = join(root, "docs", "decisions", "0001-use-a-message-queue-between-api-and-workers.md");
+    const diagram = md.replace(/\.md$/, ".excalidraw");
+    expect(text(r)).toContain("docs/decisions/0001-use-a-message-queue-between-api-and-workers.md");
+
+    const record = readFileSync(md, "utf8");
+    expect(record).toContain("# 0001. Use a message queue between API and workers");
+    expect(record).toContain("Status: Accepted");
+    expect(record).toContain("(./0001-use-a-message-queue-between-api-and-workers.excalidraw)");
+    expect(record).toContain("## Decision\nUse a message queue.");
+    expect(record).toContain('- {id: api->queue, from: api, to: queue, label: "enqueue"}');
+
+    const file = JSON.parse(readFileSync(diagram, "utf8"));
+    expect(file.type).toBe("excalidraw");
+    expect(file.elements.filter((e: any) => e.type === "rectangle").map((e: any) => e.id).sort()).toEqual(["api", "queue"]);
+  });
+
+  it("numbers records consecutively and makes a safe slug from any title", async () => {
+    const { client, root } = await agreedSession();
+    await save(client, "First");
+    const second = await save(client, "  Ünïcode / ../../etc: passwd?!  " + "x".repeat(200));
+    expect(second.isError).toBeFalsy();
+    const files = readdirSync(join(root, "docs", "decisions")).sort();
+    expect(files.filter((f) => f.endsWith(".md")).map((f) => f.slice(0, 4))).toEqual(["0001", "0002"]);
+    for (const f of files) expect(f).toMatch(/^\d{4}-[a-z0-9-]{1,60}\.(md|excalidraw)$/);
+  });
+
+  it("rejects a body that is missing the required sections, naming them", async () => {
+    const { client, root } = await agreedSession();
+    const r = await save(client, "Thin record", "## Context\nJust this.");
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain("Options considered");
+    expect(text(r)).toContain("Decision");
+    expect(text(r)).toContain("Consequences");
+    expect(existsSync(join(root, "docs", "decisions"))).toBe(false);
   });
 });
