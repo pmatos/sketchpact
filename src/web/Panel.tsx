@@ -53,9 +53,12 @@ export function Panel({ state }: { state: TurnState }) {
           Your turn
         </button>
         <button type="button" className="agree" disabled={!active} onClick={() => send("agree")}>
-          Agree
+          Agree &amp; finish
         </button>
       </div>
+      <p className="panel-help" data-testid="button-help">
+        <b>Your turn</b> sends your edits and comment and keeps the session going. <b>Agree &amp; finish</b> ends the session and has Claude write the decision record.
+      </p>
     </aside>
   );
 }

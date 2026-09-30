@@ -33,7 +33,9 @@ describe("side panel", () => {
     await page.goto(base);
 
     const yourTurn = page.getByRole("button", { name: "Your turn" });
-    const agree = page.getByRole("button", { name: "Agree" });
+    const agree = page.getByRole("button", { name: "Agree & finish" });
+    await expect.poll(() => page.getByTestId("button-help").textContent()).toMatch(/Your turn.*keeps? (the )?(session|going)/i);
+    await expect.poll(() => page.getByTestId("button-help").textContent()).toMatch(/Agree & finish.*(ends|closes).*record/i);
     await expect.poll(() => page.getByTestId("turn-status").textContent()).toMatch(/Waiting for Claude/);
     await expect.poll(() => yourTurn.isDisabled()).toBe(true);
     await expect.poll(() => agree.isDisabled()).toBe(true);

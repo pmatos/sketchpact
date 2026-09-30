@@ -71,3 +71,8 @@
 - What the session did **not** exercise: the revise loop. The user agreed at turn 1, so the diff-driven "respond to my edits" path has only been tested by unit tests, not live. Next real run should be a design the user disagrees with.
 - Gap found in the saved artifact: the diagram still contains the note "Open: on SAT, does the counterexample join the test corpus?" and has no corpus node, although the decision answers exactly that. Fixed in the skill (step 7: make the board show the decision before asking for agreement; resolve answered open notes; yield again if the board changes after agreement). Not fixed in the committed example on purpose: it is the evidence for this note.
 - Small quality nits, not fixed: `Source asm fn` sits mid-diagram because ELK layers around feedback loops; edge routes for back edges are long.
+
+### UX finding from the first real session: "Agree" was ambiguous
+- The user pressed **Agree** meaning "yes to your recommendation" and did not realise it ends the session and triggers the decision record ("Oh - so Agree means design is finished."). The agent had asked "Agree?" about a single point, so the button label invited exactly that reading.
+- Fix, in both places it went wrong: the button is now **Agree & finish** with a two-line explanation under the buttons, and the skill forbids phrasing questions as "Agree?" and tells the agent to announce explicitly when it thinks the design is final. It also tells the agent not to save when `agreed: true` arrives with a comment that still reads like a partial answer.
+- Takeaway for the post: turn-taking protocols need a distinct "I'm done" signal and a distinct "continue" signal, and the UI has to name them by their consequence, not by their sentiment.
