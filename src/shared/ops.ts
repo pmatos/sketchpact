@@ -28,6 +28,16 @@ export const OpSchema = z.discriminatedUnion("op", [
 
 export type Op = z.infer<typeof OpSchema>;
 
+export interface Actor {
+  id: string;
+  cluster: string;
+  color?: string;
+}
+
+export interface ApplyContext {
+  actor?: Actor;
+}
+
 export interface OpError {
   index: number;
   message: string;
@@ -41,13 +51,13 @@ const fail = (message: string): never => {
   throw new OpFailure(message);
 };
 
-export function applyOps(input: readonly El[], ops: readonly Op[]): ApplyResult {
+export function applyOps(input: readonly El[], ops: readonly Op[], ctx: ApplyContext = {}): ApplyResult {
   const elements: El[] = structuredClone(input) as El[];
   const errors: OpError[] = [];
 
   ops.forEach((op, index) => {
     try {
-      apply(elements, op);
+      apply(elements, op, ctx.actor);
     } catch (err) {
       if (!(err instanceof OpFailure)) throw err;
       errors.push({ index, message: err.message });
@@ -121,6 +131,35 @@ function relabel(elements: El[], container: El, text: string): void {
   if (kind) reroute(elements, container);
 }
 
+const ownerOf = (el: El): string | null => el.customData?.owner ?? null;
+
+const tag = (el: El, actor?: Actor): void => {
+  if (actor) el.customData = { ...el.customData, owner: actor.id };
+};
+
+function assertMine(el: El, actor?: Actor): void {
+  if (!actor) return;
+  if (el.type === "frame") fail("clusters are managed by the server");
+  const owner = ownerOf(el);
+  if (owner !== actor.id) fail(`"${idOf(el)}" is owned by ${owner ?? "the user"}; you may only change your own elements`);
+}
+
+function assertMyCluster(frame: El, actor?: Actor): void {
+  if (!actor) return;
+  const owner = ownerOf(frame);
+  if (owner !== actor.id) fail(`cluster "${idOf(frame)}" belongs to ${owner ?? "the user"}`);
+}
+
+export function ensureAgentCluster(input: readonly El[], agent: { id: string; label: string }): El[] {
+  const elements = input.map((e) => e);
+  if (live(elements).some((e) => e.type === "frame" && idOf(e) === agent.id)) return elements;
+  const right = Math.max(...obstacles(elements).map((b) => b.x + b.width), -60);
+  const frame = makeFrame(agent.id, agent.label, right + 60, 0, FRAME_MIN_W, FRAME_MIN_H);
+  frame.customData = { ...frame.customData, owner: agent.id };
+  elements.push(frame);
+  return elements;
+}
+
 const findCluster = (elements: readonly El[], id: string): El =>
   live(elements).find((e) => e.type === "frame" && idOf(e) === id) ?? fail(`unknown cluster "${id}"`);
 
@@ -183,11 +222,13 @@ function assignCluster(elements: El[], node: El, frame: El | null): void {
   reroute(elements, node);
 }
 
-function apply(elements: El[], op: Op): void {
+function apply(elements: El[], op: Op, actor?: Actor): void {
   switch (op.op) {
     case "add_node": {
       if (taken(elements, op.id)) fail(`id "${op.id}" already exists`);
-      const frame = op.cluster ? findCluster(elements, op.cluster) : null;
+      const clusterId = op.cluster ?? actor?.cluster;
+      const frame = clusterId ? findCluster(elements, clusterId) : null;
+      if (frame) assertMyCluster(frame, actor);
       const kind = op.kind ?? "rect";
       const size = sizeFor(kind, op.label);
       const { x, y } = freeSlot(obstacles(elements), size.width, size.height);
@@ -196,6 +237,8 @@ function apply(elements: El[], op: Op): void {
       bind(shape, { id: label.id, type: "text" });
       elements.push(shape, label);
       if (frame) assignCluster(elements, shape, frame);
+      tag(shape, actor);
+      if (actor?.color) shape.backgroundColor = actor.color;
       return;
     }
     case "connect": {
@@ -209,6 +252,7 @@ function apply(elements: El[], op: Op): void {
       const arrow = makeArrow(id, anchors(from, to), from, to);
       bind(from, { id, type: "arrow" });
       bind(to, { id, type: "arrow" });
+      tag(arrow, actor);
       elements.push(arrow);
       if (op.label) {
         const label = makeBoundText(`${id}#label`, arrow, op.label);
@@ -220,6 +264,7 @@ function apply(elements: El[], op: Op): void {
     case "layout":
       return;
     case "add_cluster": {
+      if (actor) fail("agents cannot create clusters; you already have your own");
       if (taken(elements, op.id)) fail(`id "${op.id}" already exists`);
       const right = Math.max(...obstacles(elements).map((b) => b.x + b.width), -60);
       elements.push(makeFrame(op.id, op.label, right + 60, 0, FRAME_MIN_W, FRAME_MIN_H));
@@ -227,11 +272,15 @@ function apply(elements: El[], op: Op): void {
     }
     case "move_to_cluster": {
       const node = findNode(elements, op.id);
-      assignCluster(elements, node, op.cluster === null ? null : findCluster(elements, op.cluster));
+      assertMine(node, actor);
+      const target = op.cluster === null ? null : findCluster(elements, op.cluster);
+      if (target) assertMyCluster(target, actor);
+      assignCluster(elements, node, target);
       return;
     }
     case "rename": {
       const el = findAny(elements, op.id);
+      assertMine(el, actor);
       if (el.type === "frame") el.name = op.label;
       else if (el.type === "text") Object.assign(el, makeNote(el.id, el.x, el.y, op.label), { customData: el.customData });
       else relabel(elements, el, op.label);
@@ -239,6 +288,7 @@ function apply(elements: El[], op: Op): void {
     }
     case "remove": {
       const el = findAny(elements, op.id);
+      assertMine(el, actor);
       const doomed = new Set([el.id]);
       for (const e of elements) if (e.containerId === el.id) doomed.add(e.id);
       for (const e of elements) {
@@ -261,7 +311,9 @@ function apply(elements: El[], op: Op): void {
         id = `note-${n}`;
       }
       const { x, y } = freeSlot(obstacles(elements), NODE_W, NODE_H);
-      elements.push(makeNote(id, x, y, op.text));
+      const note = makeNote(id, x, y, op.text);
+      tag(note, actor);
+      elements.push(note);
       return;
     }
   }

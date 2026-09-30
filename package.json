@@ -10,7 +10,8 @@
     "dev:web": "vite",
     "build:web": "npm run assets && vite build",
     "assets": "node scripts/copy-assets.mjs",
-    "postinstall": "node scripts/copy-assets.mjs"
+    "postinstall": "node scripts/copy-assets.mjs",
+    "debate": "node scripts/debate.mjs"
   },
   "keywords": [],
   "author": "",

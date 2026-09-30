@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { autoLayout } from "../src/shared/autolayout";
 import { layoutIssues } from "../src/shared/issues";
 import { applyOps, type Op } from "../src/shared/ops";
+import { renderedLabelCenter } from "../src/shared/labelpos";
 import { extractScene } from "../src/shared/scene";
 
 type El = Record<string, any>;
@@ -100,5 +101,19 @@ describe("autoLayout", () => {
     const geo = (l: El[]) => l.map((e) => [e.id, e.x, e.y, e.width, e.height]);
     expect(geo(first)).toEqual(geo(second));
     expect(summary(layoutIssues(first))).toEqual([]);
+  });
+
+  it("stores every edge label exactly where Excalidraw will draw it, so what we check is what the user sees", async () => {
+    const laid = await autoLayout(build(screenshotOps()));
+    let checked = 0;
+    for (const a of laid.filter((e) => e.type === "arrow")) {
+      const label = laid.find((t) => t.type === "text" && t.containerId === a.id);
+      if (!label) continue;
+      const rendered = renderedLabelCenter(a);
+      expect(Math.abs(label.x + label.width / 2 - rendered.x), `${a.id} x`).toBeLessThanOrEqual(1);
+      expect(Math.abs(label.y + label.height / 2 - rendered.y), `${a.id} y`).toBeLessThanOrEqual(1);
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(3);
   });
 });

@@ -92,26 +92,27 @@ export interface OpsOk {
   issues: { kind: string; ids: string[]; message: string }[];
 }
 
-export async function postOps(url: string, ops: Op[]): Promise<OpsOk | { ok: false; errors: OpError[] }> {
+export async function postOps(url: string, ops: Op[], agent?: string): Promise<OpsOk | { ok: false; errors: OpError[] }> {
   const res = await fetch(`${url}/api/ops`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ ops }),
+    body: JSON.stringify({ ops, ...(agent ? { agent } : {}) }),
   });
   return (await res.json()) as OpsOk | { ok: false; errors: OpError[] };
 }
 
-export async function yieldTurn(url: string, message?: string, allowLayoutProblems?: boolean): Promise<{ status: number; body: any }> {
+export async function yieldTurn(url: string, message?: string, allowLayoutProblems?: boolean, agent?: string): Promise<{ status: number; body: any }> {
   const res = await fetch(`${url}/api/turn/yield`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(message === undefined ? {} : { message, allowLayoutProblems }),
+    body: JSON.stringify({ ...(agent ? { agent } : {}), ...(message === undefined ? {} : { message, allowLayoutProblems }) }),
   });
   return { status: res.status, body: await res.json() };
 }
 
-export async function fetchDiff(url: string, since?: number): Promise<{ status: number; body: any }> {
-  const res = await fetch(`${url}/api/diff${since === undefined ? "" : `?since=${since}`}`);
+export async function fetchDiff(url: string, since?: number, agent?: string): Promise<{ status: number; body: any }> {
+  const query = new URLSearchParams({ ...(since === undefined ? {} : { since: String(since) }), ...(agent ? { agent } : {}) }).toString();
+  const res = await fetch(`${url}/api/diff${query ? `?${query}` : ""}`);
   return { status: res.status, body: await res.json() };
 }
 
@@ -121,4 +122,27 @@ export async function fetchScene(url: string): Promise<{ elements: Record<string
 
 export async function fetchTurn(url: string): Promise<{ turn: number; phase: string; message: string }> {
   return (await fetch(`${url}/api/turn`)).json() as never;
+}
+
+export interface AgentInfo {
+  id: string;
+  label: string;
+  color: string;
+  scribe: boolean;
+  cluster: string;
+}
+
+export async function registerAgent(url: string, id: string, label?: string): Promise<AgentInfo & { agents: AgentInfo[] }> {
+  const res = await fetch(`${url}/api/agents/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id, ...(label ? { label } : {}) }),
+  });
+  const body = (await res.json()) as AgentInfo & { agents: AgentInfo[]; error?: string };
+  if (!res.ok) throw new Error(body.error ?? "could not register agent");
+  return body;
+}
+
+export async function listAgents(url: string): Promise<AgentInfo[]> {
+  return ((await (await fetch(`${url}/api/agents`)).json()) as { agents: AgentInfo[] }).agents;
 }

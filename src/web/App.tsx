@@ -47,7 +47,7 @@ export function App() {
     socket.onmessage = (e) => {
       const msg = JSON.parse(e.data);
       if (msg.type === "turn") {
-        setTurn({ turn: msg.turn, phase: msg.phase, message: msg.message });
+        setTurn({ turn: msg.turn, phase: msg.phase, message: msg.message, agents: msg.agents });
         if (msg.phase === "user") requestAnimationFrame(fit);
         return;
       }

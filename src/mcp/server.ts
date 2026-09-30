@@ -5,20 +5,43 @@ import { formatDiff, formatScene } from "../shared/format";
 import { OpSchema } from "../shared/ops";
 import { extractScene } from "../shared/scene";
 import { excalidrawDocument } from "../shared/excalidraw-file";
-import { ensureCanvas, fetchDiff, fetchElements, fetchScene, fetchTurn, postOps, yieldTurn } from "./canvas";
+import { ensureCanvas, fetchDiff, fetchElements, fetchScene, fetchTurn, listAgents, postOps, registerAgent, yieldTurn } from "./canvas";
 import { missingSections, REQUIRED_SECTIONS, writeDecision } from "./decisions";
 
 const text = (t: string, isError = false) => ({ content: [{ type: "text" as const, text: t }], ...(isError ? { isError } : {}) });
 
-export function createMcpServer(root: string): McpServer {
+export interface AgentIdentity {
+  id: string;
+  label?: string;
+}
+
+export function createMcpServer(root: string, agent?: AgentIdentity): McpServer {
   const server = new McpServer({ name: "sketchpact", version: "0.1.0" });
+
+  let registered: Promise<void> | null = null;
+  const canvas = async () => {
+    const info = await ensureCanvas(root);
+    if (agent) registered ??= registerAgent(info.url, agent.id, agent.label).then(() => undefined);
+    await registered;
+    return info;
+  };
+  const me = agent?.id;
 
   server.registerTool(
     "open_canvas",
     { description: "Start the shared whiteboard if needed and return the URL the user should open in their browser." },
     async () => {
-      const { url } = await ensureCanvas(root);
-      return text(`Canvas is running. Ask the user to open ${url}\n`);
+      const { url } = await canvas();
+      if (!agent) return text(`Canvas is running. Ask the user to open ${url}\n`);
+      const agents = await listAgents(url);
+      const mine = agents.find((a) => a.id === agent.id)!;
+      const scribe = agents.find((a) => a.scribe)!;
+      const role = mine.scribe
+        ? "you are the scribe: after the arbiter presses Agree & finish, you alone call save_decision and must record both positions and the ruling"
+        : `the scribe is "${scribe.id}", who records the decision after the arbiter agrees; you do not call save_decision`;
+      return text(
+        `Canvas is running. Ask the user (the arbiter) to open ${url}\nYou are agent "${mine.id}" and ${role}. Your cluster is "${mine.cluster}"; you may add, change and remove only your own elements, but you may connect your nodes to the opponent's. Agents on this board: ${agents.map((a) => a.id).join(", ")}.\n`,
+      );
     },
   );
 
@@ -29,7 +52,7 @@ export function createMcpServer(root: string): McpServer {
         "Return the whiteboard as a compact semantic graph: nodes (id, label, kind, cluster), edges (from/to/label), clusters, free-standing notes, and warnings about unlabeled shapes or unbound arrows. Never pixels.",
     },
     async () => {
-      const { url } = await ensureCanvas(root);
+      const { url } = await canvas();
       return text(formatScene(extractScene(await fetchElements(url))));
     },
   );
@@ -42,9 +65,9 @@ export function createMcpServer(root: string): McpServer {
       inputSchema: { ops: z.array(OpSchema).min(1) },
     },
     async ({ ops }) => {
-      const { url } = await ensureCanvas(root);
+      const { url } = await canvas();
       const before = extractScene(await fetchElements(url));
-      const result = await postOps(url, ops);
+      const result = await postOps(url, ops, me);
       if (!result.ok) {
         return text(`Nothing was applied.\n${result.errors.map((e) => `op ${e.index}: ${e.message}`).join("\n")}\n`, true);
       }
@@ -69,8 +92,8 @@ export function createMcpServer(root: string): McpServer {
       },
     },
     async ({ message, allow_layout_problems }) => {
-      const { url } = await ensureCanvas(root);
-      const { status, body } = await yieldTurn(url, message, allow_layout_problems);
+      const { url } = await canvas();
+      const { status, body } = await yieldTurn(url, message, allow_layout_problems, me);
       if (status === 422) {
         const list = (body.issues as { message: string }[]).map((i) => `  - ${i.message}`).join("\n");
         return text(`${body.error}\nProblems:\n${list}\n`, true);
@@ -88,8 +111,8 @@ export function createMcpServer(root: string): McpServer {
       inputSchema: { since_turn: z.number().int().min(0).optional() },
     },
     async ({ since_turn }) => {
-      const { url } = await ensureCanvas(root);
-      const { status, body } = await fetchDiff(url, since_turn);
+      const { url } = await canvas();
+      const { status, body } = await fetchDiff(url, since_turn, me);
       if (status !== 200) return text(`${body.error ?? "diff failed"}\n`, true);
       return text(body.diff);
     },
@@ -102,8 +125,15 @@ export function createMcpServer(root: string): McpServer {
       inputSchema: { title: z.string().min(1), body: z.string().min(1) },
     },
     async ({ title, body }) => {
-      const { url } = await ensureCanvas(root);
+      const { url } = await canvas();
       const turn = await fetchTurn(url);
+      if (agent) {
+        const agents = await listAgents(url);
+        const scribe = agents.find((a) => a.scribe);
+        if (scribe && scribe.id !== agent.id) {
+          return text(`Only the scribe ("${scribe.id}") records the decision. Your part is done once the arbiter has agreed.\n`, true);
+        }
+      }
       if (turn.phase !== "agreed") {
         return text(`The user has not agreed yet (turn phase: ${turn.phase}). Keep going with yield_turn until it returns agreed: true.\n`, true);
       }

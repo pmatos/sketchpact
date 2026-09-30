@@ -3,39 +3,73 @@ import { join } from "node:path";
 import { diffScenes } from "../shared/diff";
 import { formatDiff } from "../shared/format";
 import { extractScene } from "../shared/scene";
+import type { AgentInfo } from "./agents";
 
 type El = Record<string, any>;
 
-export type Phase = "idle" | "user" | "agent" | "agreed";
+export type Phase = "idle" | "agents" | "user" | "agent" | "agreed";
+
+export interface AgentCard {
+  id: string;
+  label: string;
+  color: string;
+  scribe: boolean;
+  status: "working" | "yielded" | "skipped";
+  message: string;
+}
 
 export interface TurnState {
   turn: number;
   phase: Phase;
   message: string;
+  agents?: AgentCard[];
 }
 
 export type YieldResult =
-  | { status: "done"; turn: number; agreed: boolean; user_comment: string; diff_since_last_turn: string }
+  | {
+      status: "done";
+      turn: number;
+      agreed: boolean;
+      user_comment: string;
+      diff_since_last_turn: string;
+      others?: { agent: string; message: string }[];
+      skipped?: string[];
+    }
   | { status: "still_waiting"; turn: number };
 
 export class TurnError extends Error {}
 
-interface Open {
-  turn: number;
+const SOLO = "";
+
+interface Entry {
   message: string;
-  agentElements: El[];
+  elements: El[];
   waiters: Set<(r: YieldResult) => void>;
+}
+
+interface Round {
+  turn: number;
+  entries: Map<string, Entry>;
+  skipped: Set<string>;
+}
+
+interface Snapshot {
+  message: string;
+  at: string;
+  elements: El[];
 }
 
 interface TurnFile {
   turn: number;
-  agent: { message: string; at: string; elements: El[] };
+  agent: Snapshot;
+  agents?: Record<string, Snapshot>;
   user?: { kind: "turn" | "agree"; comment: string; at: string; elements: El[] };
 }
 
 export interface TurnManagerOptions {
   dataDir: string;
   getElements: () => El[];
+  getAgents: () => AgentInfo[];
   onChange: (state: TurnState) => void;
   defaultTimeoutMs: number;
 }
@@ -46,8 +80,8 @@ export class TurnManager {
   private turn = 0;
   private phase: Phase = "idle";
   private message = "";
-  private open: Open | null = null;
-  private undelivered: YieldResult | null = null;
+  private round: Round | null = null;
+  private undelivered = new Map<string, YieldResult>();
   private readonly dir: string;
 
   constructor(private readonly opts: TurnManagerOptions) {
@@ -57,72 +91,129 @@ export class TurnManager {
     this.turn = Math.max(0, ...nums);
   }
 
-  state(): TurnState {
-    return { turn: this.turn, phase: this.phase, message: this.message };
+  private get multi(): boolean {
+    return this.opts.getAgents().length > 0;
   }
 
-  async yield(message: string | undefined, timeoutMs = this.opts.defaultTimeoutMs): Promise<YieldResult> {
-    if (message !== undefined) this.openTurn(message);
-    else if (this.undelivered) {
-      const r = this.undelivered;
-      this.undelivered = null;
-      return r;
-    } else if (!this.open) throw new TurnError("no open turn: call yield_turn with a message first");
+  private pending(round: Round): string[] {
+    const expected = this.multi ? this.opts.getAgents().map((a) => a.id) : [...round.entries.keys()];
+    return expected.filter((id) => !round.entries.has(id) && !round.skipped.has(id));
+  }
 
-    const open = this.open!;
+  state(): TurnState {
+    const base: TurnState = { turn: this.turn, phase: this.phase, message: this.message };
+    if (!this.multi) return base;
+    const round = this.round;
+    const agents: AgentCard[] = this.opts.getAgents().map((a) => {
+      const entry = round?.entries.get(a.id);
+      const status = entry ? "yielded" : round?.skipped.has(a.id) ? "skipped" : "working";
+      return { id: a.id, label: a.label, color: a.color, scribe: a.scribe, status, message: entry?.message ?? "" };
+    });
+    return { ...base, agents };
+  }
+
+  refresh(): void {
+    if (this.round) this.phase = this.pending(this.round).length ? "agents" : "user";
+    this.opts.onChange(this.state());
+  }
+
+  async yield(message: string | undefined, timeoutMs = this.opts.defaultTimeoutMs, agent = SOLO): Promise<YieldResult> {
+    if (this.multi && agent === SOLO) throw new TurnError("this canvas has registered agents: identify yourself (SKETCHPACT_AGENT) before yielding");
+    if (!this.multi && agent !== SOLO) throw new TurnError(`unknown agent "${agent}": register first`);
+    if (this.multi && !this.opts.getAgents().some((a) => a.id === agent)) throw new TurnError(`unknown agent "${agent}": register first`);
+
+    if (message !== undefined) this.openTurn(message, agent);
+    else if (this.undelivered.has(agent)) {
+      const r = this.undelivered.get(agent)!;
+      this.undelivered.delete(agent);
+      return r;
+    } else if (!this.round?.entries.has(agent)) throw new TurnError("no open turn: call yield_turn with a message first");
+
+    const entry = this.round!.entries.get(agent)!;
+    const turn = this.round!.turn;
     return new Promise<YieldResult>((resolve) => {
-      const timer = setTimeout(() => finish({ status: "still_waiting", turn: open.turn }), timeoutMs);
+      const timer = setTimeout(() => finish({ status: "still_waiting", turn }), timeoutMs);
       const finish = (r: YieldResult) => {
         clearTimeout(timer);
-        open.waiters.delete(finish);
+        entry.waiters.delete(finish);
         resolve(r);
       };
-      open.waiters.add(finish);
+      entry.waiters.add(finish);
     });
   }
 
   respond(kind: "turn" | "agree", comment = ""): void {
-    const open = this.open;
-    if (!open) throw new TurnError("no open turn to respond to");
-    const elements = this.opts.getElements();
-    const diff = formatDiff(diffScenes(extractScene(open.agentElements), extractScene(elements)));
-    const result: YieldResult = { status: "done", turn: open.turn, agreed: kind === "agree", user_comment: comment, diff_since_last_turn: diff };
+    const round = this.round;
+    if (!round) throw new TurnError("no open turn to respond to");
+    const waiting = this.pending(round);
+    if (waiting.length) throw new TurnError(`still waiting for: ${waiting.join(", ")}. Use skip to stop waiting for them.`);
 
-    const file = this.readFile(open.turn)!;
+    const elements = this.opts.getElements();
+    const multi = this.multi;
+    const file = this.readFile(round.turn)!;
     file.user = { kind, comment, at: new Date().toISOString(), elements: structuredClone(elements) };
     this.writeFile(file);
 
-    this.open = null;
+    this.round = null;
     this.phase = kind === "agree" ? "agreed" : "agent";
-    if (open.waiters.size === 0) this.undelivered = result;
-    for (const w of [...open.waiters]) w(result);
+
+    for (const [agent, entry] of round.entries) {
+      const result: YieldResult = {
+        status: "done",
+        turn: round.turn,
+        agreed: kind === "agree",
+        user_comment: comment,
+        diff_since_last_turn: formatDiff(diffScenes(extractScene(entry.elements), extractScene(elements))),
+        ...(multi
+          ? {
+              others: [...round.entries].filter(([id]) => id !== agent).map(([id, e]) => ({ agent: id, message: e.message })),
+              ...(round.skipped.size ? { skipped: [...round.skipped] } : {}),
+            }
+          : {}),
+      };
+      if (entry.waiters.size === 0) this.undelivered.set(agent, result);
+      for (const w of [...entry.waiters]) w(result);
+    }
     this.opts.onChange(this.state());
   }
 
-  diffSince(since?: number): { since: number; diff: string } | null {
+  skip(agent?: string): void {
+    const round = this.round;
+    if (!round) throw new TurnError("no open turn");
+    for (const id of this.pending(round)) if (agent === undefined || agent === id) round.skipped.add(id);
+    this.refresh();
+  }
+
+  diffSince(since?: number, agent = SOLO): { since: number; diff: string } | null {
     const turn = since ?? this.turn;
     let before: El[] = [];
     if (turn !== 0) {
       const file = this.readFile(turn);
       if (!file) return null;
-      before = file.agent.elements;
+      before = (agent !== SOLO ? file.agents?.[agent] : undefined)?.elements ?? file.agent.elements;
     }
     return { since: turn, diff: formatDiff(diffScenes(extractScene(before), extractScene(this.opts.getElements()))) };
   }
 
-  private openTurn(message: string): void {
-    if (this.open) {
-      this.open.message = message;
-      this.open.agentElements = structuredClone(this.opts.getElements());
-    } else {
+  private openTurn(message: string, agent: string): void {
+    const snapshot = structuredClone(this.opts.getElements());
+    if (!this.round) {
       this.turn += 1;
-      this.open = { turn: this.turn, message, agentElements: structuredClone(this.opts.getElements()), waiters: new Set() };
+      this.round = { turn: this.turn, entries: new Map(), skipped: new Set() };
     }
-    this.undelivered = null;
+    const round = this.round;
+    const existing = round.entries.get(agent);
+    round.entries.set(agent, { message, elements: snapshot, waiters: existing?.waiters ?? new Set() });
+    round.skipped.delete(agent);
+    this.undelivered.delete(agent);
     this.message = message;
-    this.phase = "user";
-    this.writeFile({ turn: this.open.turn, agent: { message, at: new Date().toISOString(), elements: this.open.agentElements } });
-    this.opts.onChange(this.state());
+
+    const at = new Date().toISOString();
+    const file = this.readFile(round.turn) ?? { turn: round.turn, agent: { message, at, elements: snapshot } };
+    file.agent = { message, at, elements: snapshot };
+    if (this.multi) file.agents = { ...file.agents, [agent]: { message, at, elements: snapshot } };
+    this.writeFile(file);
+    this.refresh();
   }
 
   private file(turn: number) {

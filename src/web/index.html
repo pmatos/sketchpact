@@ -18,11 +18,20 @@
       .panel-buttons { display: flex; gap: 8px; }
       .panel button { flex: 1; padding: 10px; border-radius: 6px; border: 1px solid #1b6ec2; background: #1b6ec2; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
       .panel button.agree { background: #1a7f4b; border-color: #1a7f4b; }
+      .panel-cards { flex: 1; overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+      .agent-card { background: #fff; border: 1px solid #e0e0e8; border-left: 6px solid #ccc; border-radius: 8px; padding: 10px 12px; }
+      .agent-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+      .agent-swatch { width: 10px; height: 10px; border-radius: 50%; border: 1px solid #0003; }
+      .agent-badge { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; background: #e8e8f0; border-radius: 4px; padding: 1px 5px; color: #55556a; }
+      .agent-status { margin-left: auto; font-size: 12px; color: #6b6b78; }
+      .agent-status.status-yielded { color: #1a7f4b; }
+      .agent-message { white-space: pre-wrap; line-height: 1.45; font-size: 14px; }
+      .panel button.skip { background: transparent; color: #1b6ec2; border: 1px dashed #1b6ec2; flex: none; }
       .panel-help { margin: 0; font-size: 12px; line-height: 1.4; color: #6b6b78; }
       .panel button:disabled, .panel textarea:disabled { opacity: .45; cursor: not-allowed; }
       @media (prefers-color-scheme: dark) {
         .panel { background: #1e1e24; color: #ececf2; border-left-color: #383842; }
-        .panel-message { background: #26262e; border-color: #383842; }
+        .panel-message, .agent-card { background: #26262e; border-color: #383842; }
         .panel textarea { background: #26262e; color: inherit; border-color: #45454f; }
       }
     </style>

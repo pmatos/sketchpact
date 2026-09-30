@@ -12,6 +12,7 @@ const EMPTY: Scene = { elements: [] };
 
 export class SceneStore {
   private scene: Scene;
+  version = 0;
   private readonly file: string;
 
   constructor(dataDir: string) {
@@ -26,6 +27,7 @@ export class SceneStore {
 
   set(scene: Scene): void {
     this.scene = scene;
+    this.version += 1;
     const doc = excalidrawDocument(scene);
     const tmp = `${this.file}.tmp`;
     writeFileSync(tmp, JSON.stringify(doc, null, 2));

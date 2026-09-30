@@ -8,7 +8,7 @@ export interface LayoutIssue {
   message: string;
 }
 
-interface Box {
+export interface Box {
   x: number;
   y: number;
   width: number;
@@ -37,9 +37,9 @@ export const fitScale = (b: Box) => Math.min(1, VIEW_W / Math.max(b.width, 1), V
 
 const semantic = (e: El): string => e.customData?.sketchpactId ?? e.id;
 
-const overlaps = (a: Box, b: Box) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+export const overlaps = (a: Box, b: Box) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
-function segmentHitsBox(p: [number, number], q: [number, number], box: Box): boolean {
+export function segmentHitsBox(p: [number, number], q: [number, number], box: Box): boolean {
   let t0 = 0;
   let t1 = 1;
   const dx = q[0] - p[0];

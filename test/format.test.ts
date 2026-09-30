@@ -65,3 +65,52 @@ describe("formatDiff", () => {
     expect(formatDiff(diffScenes(s, s))).toBe("(no semantic changes)\n");
   });
 });
+
+describe("attribution", () => {
+  const owned = (o: string) => ({ customData: { sketchpactId: "x", owner: o } });
+
+  it("prints owners in the scene only when there are some", () => {
+    const scene = extractScene([
+      frame("f", "Simplicity", { customData: { sketchpactId: "simplicity", owner: "simplicity" } }),
+      rect("r", { customData: { sketchpactId: "api", owner: "simplicity" }, frameId: "f" }),
+      boundText("t", "r", "API"),
+      note("n", "YAGNI", { customData: { sketchpactId: "why", owner: "simplicity" } }),
+    ]);
+    expect(formatScene(scene)).toBe(
+      [
+        "nodes:",
+        '  api: {label: "API", kind: rect, cluster: simplicity, owner: simplicity}',
+        "clusters:",
+        '  simplicity: {label: "Simplicity", type: frame, members: [api], owner: simplicity}',
+        "notes:",
+        '  - {id: why, text: "YAGNI", owner: simplicity}',
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("marks who made each change in the diff, leaving the user's changes unmarked", () => {
+    const before = extractScene([rect("keep", { customData: { sketchpactId: "keep", owner: "extensibility" } }), boundText("tk", "keep", "Keep"), rect("old", { customData: { sketchpactId: "old", owner: "extensibility" } }), boundText("to", "old", "Old")]);
+    const after = extractScene([
+      rect("keep", { customData: { sketchpactId: "keep", owner: "extensibility" } }),
+      boundText("tk", "keep", "Keep v2"),
+      rect("new", { customData: { sketchpactId: "new", owner: "simplicity" } }),
+      boundText("tn", "new", "New"),
+      rect("mine"),
+      boundText("tm", "mine", "User's"),
+      note("n", "why?", { customData: { sketchpactId: "n", owner: "simplicity" } }),
+      arrow("a", "new", "keep", { customData: { sketchpactId: "a", owner: "simplicity" } }),
+    ]);
+    expect(formatDiff(diffScenes(before, after))).toBe(
+      [
+        '+node mine "User\'s" (rect)',
+        '+node new "New" (rect) [by simplicity]',
+        '-node old "Old" [by extensibility]',
+        '~node keep: "Keep" -> "Keep v2" [by extensibility]',
+        "+edge a: new->keep null [by simplicity]",
+        '+note n "why?" [by simplicity]',
+        "",
+      ].join("\n"),
+    );
+  });
+});

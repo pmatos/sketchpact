@@ -4,6 +4,7 @@ export interface NodeRef {
   id: string;
   label: string | null;
   kind: NodeKind;
+  owner?: string;
 }
 
 export interface Endpoints {
@@ -29,7 +30,7 @@ export interface SceneDiff {
   nodes: {
     added: NodeRef[];
     removed: NodeRef[];
-    renamed: { id: string; from: string | null; to: string | null }[];
+    renamed: { id: string; from: string | null; to: string | null; owner?: string }[];
   };
 }
 
@@ -40,11 +41,11 @@ export function diffScenes(before: Scene, after: Scene): SceneDiff {
   for (const id of ids(after.nodes)) {
     const n = after.nodes[id]!;
     const prev = before.nodes[id];
-    if (!prev) nodes.added.push({ id, label: n.label, kind: n.kind });
-    else if (prev.label !== n.label) nodes.renamed.push({ id, from: prev.label, to: n.label });
+    if (!prev) nodes.added.push({ id, label: n.label, kind: n.kind, ...(n.owner ? { owner: n.owner } : {}) });
+    else if (prev.label !== n.label) nodes.renamed.push({ id, from: prev.label, to: n.label, ...(n.owner ? { owner: n.owner } : {}) });
   }
   for (const id of ids(before.nodes)) {
-    if (!after.nodes[id]) nodes.removed.push({ id, label: before.nodes[id]!.label, kind: before.nodes[id]!.kind });
+    if (!after.nodes[id]) nodes.removed.push({ id, label: before.nodes[id]!.label, kind: before.nodes[id]!.kind, ...(before.nodes[id]!.owner ? { owner: before.nodes[id]!.owner } : {}) });
   }
 
   const edges: SceneDiff["edges"] = { added: [], removed: [], relabeled: [], rewired: [] };

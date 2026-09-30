@@ -4,6 +4,7 @@ export interface SceneNode {
   label: string | null;
   kind: NodeKind;
   cluster: string | null;
+  owner?: string;
 }
 
 export interface SceneEdge {
@@ -11,17 +12,20 @@ export interface SceneEdge {
   from: string | null;
   to: string | null;
   label: string | null;
+  owner?: string;
 }
 
 export interface SceneCluster {
   label: string | null;
   type: "frame" | "group";
   members: string[];
+  owner?: string;
 }
 
 export interface SceneNote {
   id: string;
   text: string;
+  owner?: string;
 }
 
 export interface Scene {
@@ -36,6 +40,8 @@ type El = Record<string, any>;
 
 const KINDS: Record<string, NodeKind> = { rectangle: "rect", ellipse: "ellipse", diamond: "diamond" };
 
+const ownerField = (el: El): { owner?: string } => (el.customData?.owner ? { owner: el.customData.owner } : {});
+
 export const idOf = (el: El): string => el.customData?.sketchpactId ?? el.id;
 
 export function extractScene(elements: readonly El[]): Scene {
@@ -48,7 +54,7 @@ export function extractScene(elements: readonly El[]): Scene {
   for (const e of live) {
     const kind = KINDS[e.type];
     if (!kind) continue;
-    nodes[idOf(e)] = { label: labels.get(e.id) ?? null, kind, cluster: null };
+    nodes[idOf(e)] = { label: labels.get(e.id) ?? null, kind, cluster: null, ...ownerField(e) };
     nodeIdByElement.set(e.id, idOf(e));
   }
 
@@ -57,7 +63,7 @@ export function extractScene(elements: readonly El[]): Scene {
   for (const e of live) {
     if (e.type !== "frame") continue;
     frameIds.add(e.id);
-    clusters[idOf(e)] = { label: e.name ?? null, type: "frame", members: [] };
+    clusters[idOf(e)] = { label: e.name ?? null, type: "frame", members: [], ...ownerField(e) };
   }
   const groupMembers = new Map<string, string[]>();
   for (const e of live) {
@@ -81,7 +87,7 @@ export function extractScene(elements: readonly El[]): Scene {
 
   const notes: SceneNote[] = live
     .filter((e) => e.type === "text" && !e.containerId)
-    .map((e) => ({ id: idOf(e), text: e.originalText ?? e.text }))
+    .map((e) => ({ id: idOf(e), text: e.originalText ?? e.text, ...ownerField(e) }))
     .sort((a, b) => a.id.localeCompare(b.id));
 
   const endpoint = (binding: El | null | undefined) => nodeIdByElement.get(binding?.elementId) ?? null;
@@ -92,6 +98,7 @@ export function extractScene(elements: readonly El[]): Scene {
       from: endpoint(e.startBinding),
       to: endpoint(e.endBinding),
       label: labels.get(e.id) ?? null,
+      ...ownerField(e),
     }));
 
   edges.sort((a, b) => a.id.localeCompare(b.id));

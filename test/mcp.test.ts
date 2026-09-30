@@ -366,3 +366,93 @@ describe("MCP yield gate", () => {
     expect(JSON.parse(text(await yielding(client))).status).toBe("still_waiting");
   });
 });
+describe("two agents over stdio", () => {
+  const root = () => mkdtempSync(join(tmpdir(), "sketchpact-debate-"));
+  const env = (agent: string) => ({ SKETCHPACT_AGENT: agent, SKETCHPACT_YIELD_TIMEOUT_S: "10" });
+  const call = (client: Client, name: string, args: Record<string, unknown> = {}) => client.callTool({ name, arguments: args });
+  const respond = (r: string, body: unknown) =>
+    fetch(`${serverInfo(r).url}/api/turn/respond`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const phase = async (r: string) => (await (await fetch(`${serverInfo(r).url}/api/turn`)).json()).phase;
+  const until = async (fn: () => Promise<boolean>) => {
+    for (let i = 0; i < 100; i++) {
+      if (await fn()) return;
+      await new Promise((res) => setTimeout(res, 50));
+    }
+    throw new Error("condition not reached");
+  };
+
+  async function pair() {
+    const r = root();
+    const [a, b] = await Promise.all([session(r, env("simplicity")), session(r, env("extensibility"))]);
+    await call(a.client, "open_canvas");
+    await call(b.client, "open_canvas");
+    return { root: r, simple: a.client, ext: b.client };
+  }
+
+  it("registers each agent on first use, tells it its role, and gives each an owned cluster", async () => {
+    const r = root();
+    const first = await session(r, env("simplicity"));
+    const opened = text(await call(first.client, "open_canvas"));
+    expect(opened).toContain("simplicity");
+    expect(opened).toContain("scribe");
+    const second = await session(r, env("extensibility"));
+    const opened2 = text(await call(second.client, "open_canvas"));
+    expect(opened2).toContain("extensibility");
+    expect(opened2).not.toContain("you are the scribe");
+
+    const scene = text(await call(second.client, "get_scene"));
+    expect(scene).toContain("simplicity: {label: \"Simplicity\", type: frame, members: [], owner: simplicity}");
+    expect(scene).toContain("extensibility: {label: \"Extensibility\", type: frame, members: [], owner: extensibility}");
+  });
+
+  it("confines each agent to its own cluster and elements", async () => {
+    const { simple, ext } = await pair();
+    const added = await call(simple, "apply_ops", { ops: [{ op: "add_node", id: "api", label: "API" }] });
+    expect(text(added)).toContain('+node api "API" (rect) [by simplicity]');
+    expect(text(await call(ext, "get_scene"))).toContain("api: {label: \"API\", kind: rect, cluster: simplicity, owner: simplicity}");
+
+    const refused = await call(ext, "apply_ops", { ops: [{ op: "remove", id: "api" }] });
+    expect(refused.isError).toBe(true);
+    expect(text(refused)).toContain('"api" is owned by simplicity');
+
+    const cross = await call(ext, "apply_ops", { ops: [{ op: "add_node", id: "host", label: "Plugin host" }, { op: "connect", from: "host", to: "api", label: "extends" }] });
+    expect(cross.isError).toBeFalsy();
+  });
+
+  it("holds the arbiter until both agents have spoken, then tells each what the other said", async () => {
+    const { root: r, simple, ext } = await pair();
+    const a = call(simple, "yield_turn", { message: "One service is enough." });
+    await until(async () => (await phase(r)) === "agents");
+    expect((await respond(r, { kind: "turn" })).status).toBe(409);
+
+    const b = call(ext, "yield_turn", { message: "Add a plugin seam." });
+    await until(async () => (await phase(r)) === "user");
+    await respond(r, { kind: "turn", comment: "Extensibility, justify the seam." });
+
+    const ra = JSON.parse(text(await a));
+    const rb = JSON.parse(text(await b));
+    expect(ra).toMatchObject({ status: "done", user_comment: "Extensibility, justify the seam." });
+    expect(ra.others).toEqual([{ agent: "extensibility", message: "Add a plugin seam." }]);
+    expect(rb.others).toEqual([{ agent: "simplicity", message: "One service is enough." }]);
+  });
+
+  it("lets only the scribe record the decision", async () => {
+    const { root: r, simple, ext } = await pair();
+    const a = call(simple, "yield_turn", { message: "Final?" });
+    const b = call(ext, "yield_turn", { message: "Final?" });
+    await until(async () => (await phase(r)) === "user");
+    await respond(r, { kind: "agree", comment: "simplicity's design" });
+    await Promise.all([a, b]);
+
+    const body = ["## Context", "c", "## Options considered", "o", "## Decision", "d", "## Consequences", "q"].join("\n");
+    const refused = await call(ext, "save_decision", { title: "Debate outcome", body });
+    expect(refused.isError).toBe(true);
+    expect(text(refused)).toContain("scribe");
+    expect(text(refused)).toContain("simplicity");
+    expect(existsSync(join(r, "docs", "decisions"))).toBe(false);
+
+    const saved = await call(simple, "save_decision", { title: "Debate outcome", body });
+    expect(saved.isError).toBeFalsy();
+    expect(existsSync(join(r, "docs", "decisions"))).toBe(true);
+  });
+});
