@@ -86,20 +86,69 @@ describe("viewport", () => {
     await page.close();
   }, 30_000);
 
-  it("re-fits the board when the agent hands over the turn, after the user has zoomed elsewhere", async () => {
-    await putScene(base, wide);
+  const zoomOf = (page: import("playwright-core").Page) => page.evaluate(() => (window as any).sketchpactApi.getAppState().zoom.value as number);
+
+  it("re-fits the board when the agent hands over the turn, if the user has not touched the view", async () => {
+    await putScene(base, [{ id: "a", type: "rectangle", x: 0, y: 0, width: 160, height: 80 }]);
     const page = await browser.newPage();
     await page.goto(base);
-    await expect.poll(async () => (await visible(page)).zoom, { timeout: 10_000 }).toBeLessThan(0.5);
-    await page.evaluate(() => (window as any).sketchpactApi.updateScene({ appState: { zoom: { value: 1 }, scrollX: 900, scrollY: 900 } }));
-    await expect.poll(async () => (await visible(page)).zoom).toBe(1);
+    await expect.poll(() => zoomOf(page), { timeout: 10_000 }).toBeGreaterThan(0.9);
 
+    await putScene(base, wide);
     const pending = post(base, "/api/turn/yield", { message: "Look", timeoutMs: 50, allowLayoutProblems: true });
-    await expect.poll(async () => (await visible(page)).zoom, { timeout: 10_000 }).toBeLessThan(0.5);
+    await expect.poll(() => zoomOf(page), { timeout: 10_000 }).toBeLessThan(0.5);
     const v = await visible(page);
     expect(v.left).toBeGreaterThanOrEqual(0);
     expect(v.right).toBeLessThanOrEqual(v.width);
     await pending;
+    await page.close();
+  }, 30_000);
+
+  it("keeps the user's own zoom when the agent hands over the turn", async () => {
+    await putScene(base, wide);
+    const page = await browser.newPage();
+    await page.goto(base);
+    await expect.poll(() => zoomOf(page), { timeout: 10_000 }).toBeLessThan(0.5);
+    const fitted = await zoomOf(page);
+    await page.getByTestId("zoom-in").click();
+    await page.getByTestId("zoom-in").click();
+    const mine = await zoomOf(page);
+    expect(mine).toBeGreaterThan(fitted * 1.4);
+
+    const pending = post(base, "/api/turn/yield", { message: "Look again", timeoutMs: 50, allowLayoutProblems: true });
+    await new Promise((r) => setTimeout(r, 700));
+    expect(await zoomOf(page)).toBeCloseTo(mine, 5);
+    await pending;
+    await page.close();
+  }, 30_000);
+});
+
+describe("zoom controls in a narrow window", () => {
+  it("offers zoom in, zoom out and fit even when Excalidraw is in its phone layout, and they work", async () => {
+    await putScene(base, [
+      { id: "a", type: "rectangle", x: 0, y: 0, width: 160, height: 80 },
+      { id: "b", type: "rectangle", x: 2500, y: 200, width: 160, height: 80 },
+    ]);
+    const page = await browser.newPage({ viewport: { width: 960, height: 800 } });
+    await page.goto(base);
+    await expect.poll(() => page.evaluate(() => !!(window as any).sketchpactApi), { timeout: 10_000 }).toBe(true);
+    expect(await page.locator(".excalidraw--mobile").count(), "this window really is in Excalidraw's phone layout").toBe(1);
+
+    const zoom = () => page.evaluate(() => (window as any).sketchpactApi.getAppState().zoom.value as number);
+    await expect.poll(zoom).toBeLessThan(0.5);
+    const fitted = await zoom();
+
+    await page.getByTestId("zoom-in").click();
+    const bigger = await zoom();
+    expect(bigger).toBeGreaterThan(fitted * 1.1);
+    await page.getByTestId("zoom-out").click();
+    await page.getByTestId("zoom-out").click();
+    expect(await zoom()).toBeLessThan(bigger);
+
+    await page.getByTestId("zoom-in").click();
+    await page.getByTestId("zoom-in").click();
+    await page.getByTestId("zoom-fit").click();
+    await expect.poll(zoom).toBeCloseTo(fitted, 1);
     await page.close();
   }, 30_000);
 });

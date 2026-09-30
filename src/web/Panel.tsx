@@ -31,7 +31,7 @@ const STATUS_MULTI: Partial<Record<TurnState["phase"], string>> = {
   agreed: "Agreed ✓ the scribe will record the decision",
 };
 
-export function Panel({ state }: { state: TurnState }) {
+export function Panel({ state, onZoomIn, onZoomOut, onFit }: { state: TurnState; onZoomIn: () => void; onZoomOut: () => void; onFit: () => void }) {
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
   const active = state.phase === "user" && !busy;
@@ -60,7 +60,14 @@ export function Panel({ state }: { state: TurnState }) {
 
   return (
     <aside className="panel">
-      <div className="panel-turn">{state.turn > 0 ? `Turn ${state.turn}` : "Sketchpact"}</div>
+      <div className="panel-top">
+        <div className="panel-turn">{state.turn > 0 ? `Turn ${state.turn}` : "Sketchpact"}</div>
+        <div className="panel-zoom" role="group" aria-label="Board view">
+          <button type="button" onClick={onZoomOut} data-testid="zoom-out" aria-label="Zoom out" title="Zoom out">−</button>
+          <button type="button" onClick={onFit} data-testid="zoom-fit" aria-label="Fit board" title="Fit the whole board in view">Fit</button>
+          <button type="button" onClick={onZoomIn} data-testid="zoom-in" aria-label="Zoom in" title="Zoom in">+</button>
+        </div>
+      </div>
       <div className={`panel-status phase-${state.phase}`} data-testid="turn-status">
         {state.phase === "agents" && multi ? `Waiting for ${pending.map((a) => a.label).join(", ")}` : (multi && STATUS_MULTI[state.phase]) || STATUS[state.phase]}
       </div>

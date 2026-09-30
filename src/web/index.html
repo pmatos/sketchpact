@@ -9,6 +9,9 @@
       .layout { display: flex; height: 100%; font-family: system-ui, sans-serif; }
       .canvas { flex: 1; min-width: 0; }
       .panel { width: 320px; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px; padding: 16px; border-left: 1px solid #d0d0d8; background: #f8f8fb; color: #1e1e24; }
+      .panel-top { display: flex; align-items: center; justify-content: space-between; }
+      .panel-zoom { display: flex; gap: 4px; }
+      .panel .panel-zoom button { flex: none; min-width: 32px; padding: 4px 8px; background: transparent; color: #1b6ec2; border: 1px solid #c8c8d2; }
       .panel-turn { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: #6b6b78; }
       .panel-status { font-weight: 600; }
       .panel-status.phase-user { color: #1b6ec2; }
