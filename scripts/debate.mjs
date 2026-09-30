@@ -12,12 +12,17 @@ const MANDATES = {
     "Argue for a design that absorbs the changes most likely to come. Justify every extension point with a concrete, plausible future change you can name and the cost of retrofitting it later. Do not draw seams you cannot justify.",
 };
 
-export function buildPrompt({ agent, mandate, question, opponent }) {
+export function buildPrompt({ agent, mandate, question, opponent, context, repo }) {
   return [
     `Use the whiteboard-debate skill. You are the "${agent}" agent in a design debate against the "${opponent}" agent, with the user as arbiter.`,
     `Your mandate: ${mandate}`,
     `The design question: ${question}`,
-    "There is no codebase to explore unless the question says otherwise; go straight to opening the canvas and proposing in your own cluster. The arbiter answers in the side panel of the canvas. Follow the skill exactly, including who may call save_decision.",
+    ...(context ? [`Background: read ${context} first (use Read; it is long, so skim the sections you need).`] : []),
+    ...(repo ? [`You may read the codebase at ${repo} with Read, Grep and Glob to check facts before you argue them. Cite file paths and line numbers in your arguments; do not modify anything.`] : []),
+    context || repo
+      ? "Spend at most a few tool calls on research, then open the canvas and propose in your own cluster."
+      : "There is no codebase to explore unless the question says otherwise; go straight to opening the canvas and proposing in your own cluster.",
+    "The arbiter answers in the side panel of the canvas. Follow the skill exactly, including who may call save_decision.",
   ].join("\n\n");
 }
 
@@ -33,11 +38,13 @@ async function main() {
       "mandate-a": { type: "string" },
       "mandate-b": { type: "string" },
       project: { type: "string", default: process.cwd() },
+      context: { type: "string" },
+      repo: { type: "string" },
     },
   });
   const question = positionals.join(" ").trim();
   if (!question) {
-    console.error('usage: npm run debate -- "<design question>" [--a simplicity] [--b extensibility] [--mandate-a "..."] [--mandate-b "..."] [--project dir]');
+    console.error('usage: npm run debate -- "<design question>" [--a simplicity] [--b extensibility] [--mandate-a "..."] [--mandate-b "..."] [--project dir] [--context file] [--repo dir]');
     process.exit(2);
   }
   const project = resolve(values.project);
@@ -49,7 +56,8 @@ async function main() {
 
   const logs = join(project, ".sketchpact", "debate");
   mkdirSync(logs, { recursive: true });
-  const allowed = ["open_canvas", "get_scene", "apply_ops", "yield_turn", "get_diff", "save_decision"].map((t) => `mcp__sketchpact__${t}`).concat("Skill").join(",");
+  const research = values.context || values.repo;
+  const allowed = ["open_canvas", "get_scene", "apply_ops", "yield_turn", "get_diff", "save_decision"].map((t) => `mcp__sketchpact__${t}`).concat("Skill", ...(research ? ["Read", "Grep", "Glob"] : [])).join(",");
 
   const children = agents.map((agent, i) => {
     const opponent = agents[1 - i].id;
@@ -69,7 +77,7 @@ async function main() {
     const out = createWriteStream(join(logs, `${agent.id}.jsonl`));
     const child = spawn(
       "claude",
-      ["-p", buildPrompt({ agent: agent.id, mandate: agent.mandate, question, opponent }), "--mcp-config", config, "--strict-mcp-config", "--allowedTools", allowed, "--output-format", "stream-json", "--verbose"],
+      ["-p", buildPrompt({ agent: agent.id, mandate: agent.mandate, question, opponent, context: values.context && resolve(values.context), repo: values.repo && resolve(values.repo) }), "--mcp-config", config, "--strict-mcp-config", "--allowedTools", allowed, ...(values.repo ? ["--add-dir", resolve(values.repo)] : []), "--output-format", "stream-json", "--verbose"],
       { cwd: project, env: { ...process.env, MCP_TOOL_TIMEOUT: "900000" }, stdio: ["ignore", "pipe", "pipe"] },
     );
     child.stdout.pipe(out);

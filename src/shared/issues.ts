@@ -24,7 +24,7 @@ export const VIEW_H = 850;
 export const MIN_FIT_SCALE = 0.45;
 
 export function boundsOf(elements: readonly El[]): Box | null {
-  const live = elements.filter((e) => !e.isDeleted && e.type !== "text");
+  const live = elements.filter((e) => !e.isDeleted && (e.type !== "text" || !e.containerId));
   if (live.length === 0) return null;
   const x1 = Math.min(...live.map((e) => e.x));
   const y1 = Math.min(...live.map((e) => e.y));

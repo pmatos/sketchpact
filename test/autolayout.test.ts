@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { autoLayout } from "../src/shared/autolayout";
-import { layoutIssues } from "../src/shared/issues";
+import { boundsOf, fitScale, layoutIssues } from "../src/shared/issues";
 import { applyOps, type Op } from "../src/shared/ops";
 import { renderedLabelCenter } from "../src/shared/labelpos";
 import { extractScene } from "../src/shared/scene";
@@ -115,5 +115,13 @@ describe("autoLayout", () => {
       checked++;
     }
     expect(checked).toBeGreaterThan(3);
+  });
+
+  it("lays out the first real debate board readably, notes included", async () => {
+    const doc = JSON.parse(readFileSync("test/fixtures/debate-round1.excalidraw", "utf8"));
+    const laid = await autoLayout(doc.elements);
+    expect(summary(layoutIssues(laid))).toEqual([]);
+    const b = boundsOf(laid)!;
+    expect(fitScale(b)).toBeGreaterThanOrEqual(0.55);
   });
 });

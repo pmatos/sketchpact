@@ -9,6 +9,10 @@ Two agents with opposing mandates argue a design on one Excalidraw canvas. The u
 
 Tools: `open_canvas`, `get_scene`, `apply_ops`, `yield_turn`, `get_diff`, `save_decision` (scribe only).
 
+## Evidence
+
+If your launch prompt names a context file or a repository, read only what you need and check a fact before you argue it. Cite `path:line` in your arguments. An argument the opponent can falsify by reading the same file loses you the round. Do all research before you first yield; afterwards, spend tool calls on the board and on answering the arbiter.
+
 ## Rules of the board
 
 - You own one cluster (your id) and one colour. `add_node` puts nodes in your cluster automatically. You may change and remove only your own elements. You may `connect` your nodes to the opponent's (that is how you propose an interface) but never edit, rename or remove theirs.

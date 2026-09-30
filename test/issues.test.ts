@@ -79,6 +79,13 @@ describe("layoutIssues", () => {
     expect(kinds([a, b, n, straightArrow("e", a, b), label])).toContain("label-collision");
   });
 
+  it("counts free-standing notes when judging whether the board is too large", () => {
+    const a = at("a", 0, 0);
+    const wide = note("n", "a very long argument", { x: 3000, y: 0, width: 384, height: 100 });
+    expect(layoutIssues([a, wide]).map((i) => i.kind)).toEqual(["too-large"]);
+    expect(layoutIssues([a, note("n", "short", { x: 400, y: 0, width: 200, height: 40 })])).toEqual([]);
+  });
+
   it("flags an edge label that sits on top of a different edge", () => {
     const a = at("a", 0, 0);
     const b = at("b", 400, 0);
