@@ -4,6 +4,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { z } from "zod";
+import { autoLayout } from "../shared/autolayout";
+import { layoutIssues } from "../shared/issues";
+import { LayoutState } from "./layoutState";
 import { applyOps, OpSchema } from "../shared/ops";
 import { TurnError, TurnManager } from "./turns";
 import { SceneStore, type Scene } from "./store";
@@ -22,6 +25,7 @@ export interface CanvasServer {
 
 export async function startCanvasServer(opts: CanvasServerOptions): Promise<CanvasServer> {
   const store = new SceneStore(opts.dataDir);
+  const layout = new LayoutState(opts.dataDir);
 
   const turns = new TurnManager({
     dataDir: opts.dataDir,
@@ -83,21 +87,47 @@ export async function startCanvasServer(opts: CanvasServerOptions): Promise<Canv
         return json(res, 400, { ok: false, errors });
       }
       const scene = store.get();
-      const result = applyOps(scene.elements as Record<string, any>[], parsed.data.ops);
+      const before = scene.elements as Record<string, any>[];
+      const result = applyOps(before, parsed.data.ops);
       if (!result.ok) return json(res, 422, result);
-      store.set({ ...scene, elements: result.elements });
+
+      const layoutOp = parsed.data.ops.filter((o) => o.op === "layout").pop();
+      const forced = layoutOp !== undefined;
+      const mode = forced ? "forced" : layout.isUntouched(before) ? "auto" : "kept";
+      let elements = result.elements;
+      if (mode !== "kept") {
+        const direction = (layoutOp?.op === "layout" && layoutOp.direction) || layout.direction || undefined;
+        elements = await autoLayout(elements, { direction });
+        layout.record(elements, direction);
+      }
+      store.set({ ...scene, elements });
       broadcast();
-      return json(res, 200, { ok: true });
+      return json(res, 200, { ok: true, layout: mode, issues: layoutIssues(elements) });
     }
     if (req.method === "POST" && (req.url === "/api/turn/yield" || req.url === "/api/turn/respond")) {
-      let body: { message?: string; timeoutMs?: number; kind?: string; comment?: string };
+      let body: { message?: string; timeoutMs?: number; kind?: string; comment?: string; allowLayoutProblems?: boolean };
       try {
         body = JSON.parse((await readBody(req)) || "{}");
       } catch {
         return json(res, 400, { error: "invalid JSON" });
       }
       try {
-        if (req.url === "/api/turn/yield") return json(res, 200, await turns.yield(body.message, body.timeoutMs));
+        if (req.url === "/api/turn/yield") {
+          if (body.message !== undefined) {
+            const elements = store.get().elements as Record<string, any>[];
+            const issues = layoutIssues(elements);
+            const userArranged = !layout.isUntouched(elements);
+            if (issues.length && (!userArranged || !body.allowLayoutProblems)) {
+              return json(res, 422, {
+                error: userArranged
+                  ? "The board has layout problems that come from the user's own arrangement. Do not move their shapes. Either send {op:'layout'} (only if the user has agreed to a re-layout), or yield again with allow_layout_problems=true and say in your message that you left their arrangement alone."
+                  : "The board has layout problems and must not be shown to the user as is. Fix them (e.g. send {op:'layout'}) and yield again.",
+                issues,
+              });
+            }
+          }
+          return json(res, 200, await turns.yield(body.message, body.timeoutMs));
+        }
         if (body.kind !== "turn" && body.kind !== "agree") return json(res, 400, { error: 'kind must be "turn" or "agree"' });
         turns.respond(body.kind, body.comment);
         return json(res, 200, { ok: true });

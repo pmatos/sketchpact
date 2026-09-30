@@ -1,0 +1,96 @@
+[
+ {
+  "op": "add_node",
+  "id": "src",
+  "label": "Source asm sequence"
+ },
+ {
+  "op": "add_node",
+  "id": "llm",
+  "label": "LLM proposer (sonnet-5-5)"
+ },
+ {
+  "op": "add_node",
+  "id": "testgen",
+  "label": "Test generator + runner",
+  "kind": "rect"
+ },
+ {
+  "op": "add_node",
+  "id": "smt",
+  "label": "SMT equivalence check"
+ },
+ {
+  "op": "add_node",
+  "id": "verdict",
+  "label": "Verdict?",
+  "kind": "diamond"
+ },
+ {
+  "op": "add_node",
+  "id": "accept",
+  "label": "Accepted optimization",
+  "kind": "ellipse"
+ },
+ {
+  "op": "add_node",
+  "id": "cex-corpus",
+  "label": "Test corpus (+cex)"
+ },
+ {
+  "op": "connect",
+  "from": "src",
+  "to": "llm"
+ },
+ {
+  "op": "connect",
+  "from": "llm",
+  "to": "testgen",
+  "label": "candidate"
+ },
+ {
+  "op": "connect",
+  "from": "testgen",
+  "to": "llm",
+  "label": "test fail: input + diff"
+ },
+ {
+  "op": "connect",
+  "from": "testgen",
+  "to": "smt",
+  "label": "tests pass"
+ },
+ {
+  "op": "connect",
+  "from": "smt",
+  "to": "verdict"
+ },
+ {
+  "op": "connect",
+  "from": "verdict",
+  "to": "accept",
+  "label": "UNSAT = equivalent"
+ },
+ {
+  "op": "connect",
+  "from": "verdict",
+  "to": "cex-corpus",
+  "label": "SAT: counterexample"
+ },
+ {
+  "op": "connect",
+  "from": "cex-corpus",
+  "to": "llm",
+  "label": "retry w/ cex (max N)"
+ },
+ {
+  "op": "connect",
+  "from": "cex-corpus",
+  "to": "testgen"
+ },
+ {
+  "op": "add_note",
+  "id": "q-timeout",
+  "text": "OPEN: solver timeout/unknown. Reject, retry, or escalate?"
+ }
+]

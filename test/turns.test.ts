@@ -3,6 +3,9 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { closeAll, connect, post, putScene, start } from "./helpers";
 import { boundText, rect } from "./fixtures/elements";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { positionHash } from "../src/server/layoutState";
 
 afterEach(closeAll);
 
@@ -137,5 +140,32 @@ describe("turn-taking: snapshots and diff since a turn", () => {
 
     await post(base, "/api/turn/yield", { message: "t1", timeoutMs: 20 });
     expect((await (await fetch(`${base}/api/diff`)).json()).since).toBe(1);
+  });
+});
+
+describe("turn-taking: readability gate", () => {
+  const overlapping = () => [
+    rect("a", { x: 0, y: 0, width: 160, height: 80 }),
+    rect("b", { x: 20, y: 20, width: 160, height: 80 }),
+  ];
+
+  it("blocks yielding an overlapping board the user never arranged, even if the agent insists", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "sketchpact-gate-"));
+    const els = overlapping();
+    writeFileSync(join(dataDir, "canvas.excalidraw"), JSON.stringify({ type: "excalidraw", version: 2, elements: els, appState: {}, files: {} }));
+    writeFileSync(join(dataDir, "layout.json"), JSON.stringify({ hash: positionHash(els), direction: "RIGHT" }));
+    const { base } = await start({ dataDir });
+
+    const r = await post(base, "/api/turn/yield", { message: "Q", allowLayoutProblems: true, timeoutMs: 20 });
+    expect(r.status).toBe(422);
+    expect(r.body.issues[0]).toMatchObject({ kind: "overlap" });
+    expect((await (await fetch(`${base}/api/turn`)).json()).phase).toBe("idle");
+  });
+
+  it("blocks a user-arranged mess unless the agent acknowledges it", async () => {
+    const { base } = await start();
+    await putScene(base, overlapping());
+    expect((await post(base, "/api/turn/yield", { message: "Q", timeoutMs: 20 })).status).toBe(422);
+    expect((await post(base, "/api/turn/yield", { message: "Q", allowLayoutProblems: true, timeoutMs: 20 })).body.status).toBe("still_waiting");
   });
 });

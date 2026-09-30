@@ -4,6 +4,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { boundsOf, fitScale, layoutIssues } from "../src/shared/issues";
 
 const clients: Client[] = [];
 const roots: string[] = [];
@@ -114,7 +115,9 @@ describe("MCP turn-taking over stdio", () => {
     const { url } = serverInfo(root);
     await new Promise((r) => setTimeout(r, 300));
     const scene = await (await fetch(`${url}/api/scene`)).json();
-    scene.elements.find((e: any) => e.type === "text").text = "Gateway";
+    const label = scene.elements.find((e: any) => e.type === "text");
+    label.text = "Gateway";
+    label.originalText = "Gateway";
     await fetch(`${url}/api/scene`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(scene) });
     expect((await respond(root, { kind: "turn", comment: "renamed it" })).status).toBe(200);
 
@@ -226,5 +229,140 @@ describe("MCP save_decision over stdio", () => {
     expect(text(r)).toContain("Decision");
     expect(text(r)).toContain("Consequences");
     expect(existsSync(join(root, "docs", "decisions"))).toBe(false);
+  });
+});
+
+describe("MCP layout policy", () => {
+  const board = async (root: string) => (await (await fetch(`${serverInfo(root).url}/api/scene`)).json()).elements as Record<string, any>[];
+  const putBoard = async (root: string, elements: unknown[]) =>
+    fetch(`${serverInfo(root).url}/api/scene`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ elements }) });
+  const ops = (client: Client, list: unknown[]) => client.callTool({ name: "apply_ops", arguments: { ops: list } });
+
+  const CHAIN = [
+    { op: "add_node", id: "src", label: "Source assembly sequence" },
+    { op: "add_node", id: "llm", label: "LLM proposer (claude-sonnet-5-5)" },
+    { op: "add_node", id: "tests", label: "Test generator and runner" },
+    { op: "connect", from: "src", to: "llm" },
+    { op: "connect", from: "llm", to: "tests", label: "candidate" },
+    { op: "connect", from: "tests", to: "llm", label: "test failure: input and diff" },
+  ];
+
+  it("keeps the whole board readable as it grows, batch after batch", async () => {
+    const { client, root } = await session();
+    const first = await ops(client, CHAIN);
+    expect(text(first)).toContain("layout: auto");
+    expect(layoutIssues(await board(root))).toEqual([]);
+
+    await ops(client, [
+      { op: "add_node", id: "smt", label: "SMT equivalence check" },
+      { op: "connect", from: "tests", to: "smt", label: "tests pass" },
+      { op: "connect", from: "smt", to: "llm", label: "SAT: counterexample" },
+    ]);
+    expect(layoutIssues(await board(root))).toEqual([]);
+  });
+
+  it("never moves shapes the user has moved, and says so", async () => {
+    const { client, root } = await session();
+    await ops(client, CHAIN);
+    const els = await board(root);
+    const dragged = els.find((e) => e.id === "llm")!;
+    dragged.x += 33;
+    dragged.y += 17;
+    await putBoard(root, els);
+
+    const r = await ops(client, [{ op: "add_node", id: "extra", label: "Extra" }]);
+    expect(text(r)).toContain("layout: kept your arrangement");
+    const after = await board(root);
+    expect(after.find((e) => e.id === "llm")).toMatchObject({ x: dragged.x, y: dragged.y });
+    expect(after.find((e) => e.id === "src")!.x).toBe(els.find((e) => e.id === "src")!.x);
+  });
+
+  it("re-lays-out everything on an explicit layout op, even after the user moved things", async () => {
+    const { client, root } = await session();
+    await ops(client, CHAIN);
+    const els = await board(root);
+    els.find((e) => e.id === "llm")!.y += 300;
+    await putBoard(root, els);
+
+    const r = await ops(client, [{ op: "layout", direction: "DOWN" }]);
+    expect(text(r)).toContain("layout: forced");
+    const after = await board(root);
+    expect(layoutIssues(after)).toEqual([]);
+    const y = (id: string) => after.find((e) => e.id === id)!.y;
+    expect(y("llm")).toBeGreaterThan(y("src"));
+  });
+
+  it("lays out the graph from the first real session readably, through the real server path", async () => {
+    const { client, root } = await session();
+    const screenshotOps = JSON.parse(readFileSync("test/fixtures/screenshot-ops.json", "utf8"));
+    const r = await ops(client, screenshotOps);
+    expect(r.isError).toBeFalsy();
+    const els = await board(root);
+    expect(layoutIssues(els).map((i) => i.message)).toEqual([]);
+    expect(fitScale(boundsOf(els)!)).toBeGreaterThanOrEqual(0.45);
+    expect(text(r)).not.toContain("Layout problems");
+  });
+
+  it("reports layout problems it could not avoid instead of hiding them", async () => {
+    const { client, root } = await session();
+    await ops(client, CHAIN);
+    const els = await board(root);
+    const a = els.find((e) => e.id === "src")!;
+    const b = els.find((e) => e.id === "llm")!;
+    b.x = a.x + 10;
+    b.y = a.y + 10;
+    await putBoard(root, els);
+    const r = await ops(client, [{ op: "add_node", id: "z", label: "Z" }]);
+    expect(text(r)).toContain("Layout problems");
+    expect(text(r)).toContain('"src" and "llm" overlap');
+  });
+});
+
+describe("MCP yield gate", () => {
+  const info = (root: string) => serverInfo(root);
+  const ops = (client: Client, list: unknown[]) => client.callTool({ name: "apply_ops", arguments: { ops: list } });
+  const yielding = (client: Client, extra: Record<string, unknown> = {}) => client.callTool({ name: "yield_turn", arguments: { message: "Look at this", ...extra } });
+
+  async function messyBoard() {
+    const s = await session(undefined, { SKETCHPACT_YIELD_TIMEOUT_S: "0.2" });
+    await ops(s.client, [
+      { op: "add_node", id: "a", label: "Alpha service" },
+      { op: "add_node", id: "b", label: "Beta service" },
+      { op: "connect", from: "a", to: "b", label: "calls" },
+    ]);
+    const { url } = info(s.root);
+    const scene = await (await fetch(`${url}/api/scene`)).json();
+    const a = scene.elements.find((e: any) => e.id === "a");
+    const b = scene.elements.find((e: any) => e.id === "b");
+    b.x = a.x + 10;
+    b.y = a.y + 10;
+    await fetch(`${url}/api/scene`, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(scene) });
+    return { ...s, url };
+  }
+
+  it("lets a tidy board through", async () => {
+    const { client } = await session(undefined, { SKETCHPACT_YIELD_TIMEOUT_S: "0.2" });
+    await ops(client, [{ op: "add_node", id: "a", label: "A" }, { op: "add_node", id: "b", label: "B" }, { op: "connect", from: "a", to: "b" }]);
+    expect(JSON.parse(text(await yielding(client)))).toEqual({ status: "still_waiting", turn: 1 });
+  });
+
+  it("refuses to present a board that the user rearranged into a mess, and opens no turn", async () => {
+    const { client, url } = await messyBoard();
+    const r = await yielding(client);
+    expect(r.isError).toBe(true);
+    expect(text(r)).toContain('"a" and "b" overlap');
+    expect(text(r)).toContain("allow_layout_problems");
+    expect((await (await fetch(`${url}/api/turn`)).json()).phase).toBe("idle");
+  });
+
+  it("lets the agent present the user's own arrangement when it says so explicitly", async () => {
+    const { client } = await messyBoard();
+    expect(JSON.parse(text(await yielding(client, { allow_layout_problems: true }))).status).toBe("still_waiting");
+  });
+
+  it("lets the agent through after a re-layout", async () => {
+    const { client } = await messyBoard();
+    await ops(client, [{ op: "layout" }]);
+    expect(JSON.parse(text(await yielding(client))).status).toBe("still_waiting");
   });
 });

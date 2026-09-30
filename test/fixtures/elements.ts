@@ -8,7 +8,7 @@ export const ellipse = (id: string, o: El = {}) => shape("ellipse", id, o);
 export const diamond = (id: string, o: El = {}) => shape("diamond", id, o);
 
 export const boundText = (id: string, containerId: string, text: string, o: El = {}): El => ({
-  ...base, type: "text", id, text, containerId, ...o,
+  ...base, type: "text", id, text, containerId, width: 40, height: 20, ...o,
 });
 
 export const note = (id: string, text: string, o: El = {}): El => ({

@@ -41,7 +41,7 @@ export const idOf = (el: El): string => el.customData?.sketchpactId ?? el.id;
 export function extractScene(elements: readonly El[]): Scene {
   const live = elements.filter((e) => !e.isDeleted);
   const labels = new Map<string, string>();
-  for (const e of live) if (e.type === "text" && e.containerId) labels.set(e.containerId, e.text);
+  for (const e of live) if (e.type === "text" && e.containerId) labels.set(e.containerId, e.originalText ?? e.text);
 
   const nodes: Record<string, SceneNode> = {};
   const nodeIdByElement = new Map<string, string>();
@@ -81,7 +81,7 @@ export function extractScene(elements: readonly El[]): Scene {
 
   const notes: SceneNote[] = live
     .filter((e) => e.type === "text" && !e.containerId)
-    .map((e) => ({ id: idOf(e), text: e.text }))
+    .map((e) => ({ id: idOf(e), text: e.originalText ?? e.text }))
     .sort((a, b) => a.id.localeCompare(b.id));
 
   const endpoint = (binding: El | null | undefined) => nodeIdByElement.get(binding?.elementId) ?? null;

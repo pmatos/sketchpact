@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { bind, makeArrow, makeBoundText, makeFrame, makeNote, makeShape, NODE_H, NODE_W, setArrowGeometry, type El } from "./factory";
+import { bind, makeArrow, makeBoundText, makeFrame, makeNote, makeShape, NODE_H, NODE_W, setArrowGeometry, sizeFor, type El } from "./factory";
 import { freeSlot, obstacles, type Box } from "./layout";
 import { idOf } from "./scene";
 
@@ -20,6 +20,7 @@ export const OpSchema = z.discriminatedUnion("op", [
   }),
   z.object({ op: z.literal("add_cluster"), id: z.string().min(1), label: z.string() }),
   z.object({ op: z.literal("move_to_cluster"), id: z.string().min(1), cluster: z.string().min(1).nullable() }),
+  z.object({ op: z.literal("layout"), direction: z.enum(["RIGHT", "DOWN"]).optional() }),
   z.object({ op: z.literal("rename"), id: z.string().min(1), label: z.string() }),
   z.object({ op: z.literal("remove"), id: z.string().min(1) }),
   z.object({ op: z.literal("add_note"), text: z.string().min(1), id: z.string().min(1).optional() }),
@@ -101,12 +102,23 @@ function dropElements(elements: El[], doomed: Set<string>): void {
   elements.push(...keep);
 }
 
+const KIND_OF: Record<string, "rect" | "ellipse" | "diamond"> = { rectangle: "rect", ellipse: "ellipse", diamond: "diamond" };
+
 function relabel(elements: El[], container: El, text: string): void {
+  const kind = KIND_OF[container.type];
+  if (kind) {
+    const { width, height } = sizeFor(kind, text);
+    container.x -= (width - container.width) / 2;
+    container.y -= (height - container.height) / 2;
+    container.width = width;
+    container.height = height;
+  }
   const old = new Set(elements.filter((e) => e.containerId === container.id).map((e) => e.id));
   dropElements(elements, old);
   const label = makeBoundText(`${idOf(container)}#label`, container, text);
   bind(container, { id: label.id, type: "text" });
   elements.push(label);
+  if (kind) reroute(elements, container);
 }
 
 const findCluster = (elements: readonly El[], id: string): El =>
@@ -176,8 +188,10 @@ function apply(elements: El[], op: Op): void {
     case "add_node": {
       if (taken(elements, op.id)) fail(`id "${op.id}" already exists`);
       const frame = op.cluster ? findCluster(elements, op.cluster) : null;
-      const { x, y } = freeSlot(obstacles(elements), NODE_W, NODE_H);
-      const shape = makeShape(op.kind ?? "rect", op.id, x, y);
+      const kind = op.kind ?? "rect";
+      const size = sizeFor(kind, op.label);
+      const { x, y } = freeSlot(obstacles(elements), size.width, size.height);
+      const shape = makeShape(kind, op.id, x, y, op.label);
       const label = makeBoundText(`${op.id}#label`, shape, op.label);
       bind(shape, { id: label.id, type: "text" });
       elements.push(shape, label);
@@ -203,6 +217,8 @@ function apply(elements: El[], op: Op): void {
       }
       return;
     }
+    case "layout":
+      return;
     case "add_cluster": {
       if (taken(elements, op.id)) fail(`id "${op.id}" already exists`);
       const right = Math.max(...obstacles(elements).map((b) => b.x + b.width), -60);

@@ -38,7 +38,7 @@ export function createMcpServer(root: string): McpServer {
     "apply_ops",
     {
       description:
-        "Edit the whiteboard with semantic operations. The batch is atomic: if any op fails nothing is applied. Ops run in order, so later ops may use ids created earlier in the batch. Layout is automatic and existing shapes are never moved (except by move_to_cluster). Ops: add_node{id,label,kind?:rect|ellipse|diamond,cluster?}, connect{from,to,label?,id?}, rename{id,label}, remove{id} (removing a node removes its edges; removing a cluster releases its members), add_cluster{id,label} (a frame), move_to_cluster{id,cluster|null}, add_note{text,id?}. Returns the semantic diff of what changed.",
+        "Edit the whiteboard with semantic operations. The batch is atomic: if any op fails nothing is applied. Ops run in order, so later ops may use ids created earlier in the batch. Layout is automatic and existing shapes are never moved (except by move_to_cluster). Ops: layout{direction?:RIGHT|DOWN} (re-lay-out the whole board; automatic while the user has not moved anything, so use it only to change direction or after the user agrees), add_node{id,label,kind?:rect|ellipse|diamond,cluster?}, connect{from,to,label?,id?}, rename{id,label}, remove{id} (removing a node removes its edges; removing a cluster releases its members), add_cluster{id,label} (a frame), move_to_cluster{id,cluster|null}, add_note{text,id?}. Returns the semantic diff of what changed.",
       inputSchema: { ops: z.array(OpSchema).min(1) },
     },
     async ({ ops }) => {
@@ -50,7 +50,11 @@ export function createMcpServer(root: string): McpServer {
       }
       const after = extractScene(await fetchElements(url));
       const warnings = after.warnings.length ? `warnings:\n${after.warnings.map((w) => `  - ${w}`).join("\n")}\n` : "";
-      return text(`Applied ${ops.length} op(s).\n${formatDiff(diffScenes(before, after))}${warnings}`);
+      const layoutLine = { auto: "layout: auto", kept: "layout: kept your arrangement (you moved shapes, so new ones were placed incrementally)", forced: "layout: forced (whole board re-laid-out)" }[result.layout];
+      const problems = result.issues.length
+        ? `Layout problems (fix before yield_turn, e.g. with {op:"layout"} once the user agrees to a re-layout):\n${result.issues.map((i) => `  - ${i.message}`).join("\n")}\n`
+        : "";
+      return text(`Applied ${ops.length} op(s).\n${formatDiff(diffScenes(before, after))}${warnings}${layoutLine}\n${problems}`);
     },
   );
 
@@ -58,12 +62,19 @@ export function createMcpServer(root: string): McpServer {
     "yield_turn",
     {
       description:
-        "Hand the whiteboard to the user. Shows `message` in the canvas side panel and BLOCKS until the user presses 'Your turn' or 'Agree' (with an optional typed comment). Returns {status:'done', turn, agreed, user_comment, diff_since_last_turn} where the diff is what the user changed while you waited. If it returns {status:'still_waiting'} the user has not responded yet: call yield_turn again with NO message to keep waiting on the same turn. Never treat the design as agreed until agreed is true.",
-      inputSchema: { message: z.string().min(1).optional().describe("What you want the user to look at or answer. Omit to keep waiting on an open turn.") },
+        "Hand the whiteboard to the user. Shows `message` in the canvas side panel and BLOCKS until the user presses 'Your turn' or 'Agree' (with an optional typed comment). Returns {status:'done', turn, agreed, user_comment, diff_since_last_turn} where the diff is what the user changed while you waited. If it returns {status:'still_waiting'} the user has not responded yet: call yield_turn again with NO message to keep waiting on the same turn. Never treat the design as agreed until agreed is true. The call is refused while the board has layout problems (text that does not fit, overlaps, arrows through unrelated shapes, colliding labels), so an unreadable board is never shown.",
+      inputSchema: {
+        message: z.string().min(1).optional().describe("What you want the user to look at or answer. Omit to keep waiting on an open turn."),
+        allow_layout_problems: z.boolean().optional().describe("Only when the problems come from the user's own arrangement and you are deliberately leaving it alone. Say so in the message."),
+      },
     },
-    async ({ message }) => {
+    async ({ message, allow_layout_problems }) => {
       const { url } = await ensureCanvas(root);
-      const { status, body } = await yieldTurn(url, message);
+      const { status, body } = await yieldTurn(url, message, allow_layout_problems);
+      if (status === 422) {
+        const list = (body.issues as { message: string }[]).map((i) => `  - ${i.message}`).join("\n");
+        return text(`${body.error}\nProblems:\n${list}\n`, true);
+      }
       if (status !== 200) return text(`${body.error ?? "yield failed"}\n`, true);
       return text(JSON.stringify(body, null, 2));
     },

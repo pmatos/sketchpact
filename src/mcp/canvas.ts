@@ -86,20 +86,26 @@ export async function fetchElements(url: string): Promise<Record<string, any>[]>
   return ((await res.json()) as { elements: Record<string, any>[] }).elements;
 }
 
-export async function postOps(url: string, ops: Op[]): Promise<{ ok: true } | { ok: false; errors: OpError[] }> {
+export interface OpsOk {
+  ok: true;
+  layout: "auto" | "kept" | "forced";
+  issues: { kind: string; ids: string[]; message: string }[];
+}
+
+export async function postOps(url: string, ops: Op[]): Promise<OpsOk | { ok: false; errors: OpError[] }> {
   const res = await fetch(`${url}/api/ops`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ ops }),
   });
-  return (await res.json()) as { ok: true } | { ok: false; errors: OpError[] };
+  return (await res.json()) as OpsOk | { ok: false; errors: OpError[] };
 }
 
-export async function yieldTurn(url: string, message?: string): Promise<{ status: number; body: any }> {
+export async function yieldTurn(url: string, message?: string, allowLayoutProblems?: boolean): Promise<{ status: number; body: any }> {
   const res = await fetch(`${url}/api/turn/yield`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(message === undefined ? {} : { message }),
+    body: JSON.stringify(message === undefined ? {} : { message, allowLayoutProblems }),
   });
   return { status: res.status, body: await res.json() };
 }

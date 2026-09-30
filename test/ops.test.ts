@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { applyOps, type Op } from "../src/shared/ops";
+import { layoutIssues } from "../src/shared/issues";
 import { extractScene } from "../src/shared/scene";
 import { boundText, rect } from "./fixtures/elements";
 
@@ -250,5 +251,54 @@ describe("applyOps: clusters", () => {
         { index: 5, message: 'unknown node "f"' },
       ],
     });
+  });
+});
+
+describe("applyOps: node sizing", () => {
+  const LONG = "LLM proposer (claude-sonnet-5-5) with retries";
+
+  it("sizes every kind of node so its label fits, and keeps the semantic label unwrapped", () => {
+    for (const kind of ["rect", "ellipse", "diamond"] as const) {
+      const els = apply([], [{ op: "add_node", id: "n", label: LONG, kind }]);
+      expect(layoutIssues(els).filter((i) => i.kind === "text-overflow"), kind).toEqual([]);
+      expect(scene(els).nodes["n"]?.label, kind).toBe(LONG);
+    }
+  });
+
+  it("wraps long labels onto several short lines instead of one very wide shape", () => {
+    const els = apply([], [{ op: "add_node", id: "n", label: LONG }]);
+    const text = els.find((e) => e.id === "n#label")!;
+    const lines = text.text.split("\n");
+    expect(lines.length).toBeGreaterThan(1);
+    const longestWord = Math.max(...LONG.split(" ").map((w) => w.length));
+    expect(Math.max(...lines.map((l: string) => l.length))).toBeLessThanOrEqual(Math.max(18, longestWord));
+    expect(els.find((e) => e.id === "n")!.width).toBeLessThan(400);
+  });
+
+  it("keeps the standard size for short labels", () => {
+    const els = apply([], [{ op: "add_node", id: "n", label: "API" }]);
+    expect(els.find((e) => e.id === "n")).toMatchObject({ width: 160, height: 80 });
+  });
+
+  it("grows a node when it is renamed to something longer, keeping edges attached", () => {
+    const els = apply([], [
+      { op: "add_node", id: "a", label: "A" },
+      { op: "add_node", id: "b", label: "B" },
+      { op: "connect", from: "a", to: "b", id: "e" },
+      { op: "rename", id: "a", label: LONG },
+    ]);
+    expect(layoutIssues(els).filter((i) => i.kind === "text-overflow")).toEqual([]);
+    expect(scene(els).nodes["a"]?.label).toBe(LONG);
+    expect(scene(els).edges).toEqual([{ id: "e", from: "a", to: "b", label: null }]);
+  });
+
+  it("wraps and sizes edge labels too", () => {
+    const els = apply([], [
+      { op: "add_node", id: "a", label: "A" },
+      { op: "add_node", id: "b", label: "B" },
+      { op: "connect", from: "a", to: "b", label: "SAT: counterexample fed back to the test corpus", id: "e" },
+    ]);
+    expect(scene(els).edges[0]?.label).toBe("SAT: counterexample fed back to the test corpus");
+    expect(els.find((e) => e.id === "e#label")!.text).toContain("\n");
   });
 });

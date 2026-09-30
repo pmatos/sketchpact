@@ -5,7 +5,8 @@ import { Panel, type TurnState } from "./Panel";
 type Api = {
   updateScene(data: { elements: unknown[] }): void;
   getSceneElements(): readonly unknown[];
-  scrollToContent(target: unknown, opts: { fit: boolean; viewportZoomFactor: number; animate: boolean }): void;
+  getAppState(): { zoom: { value: number } };
+  scrollToContent(target: unknown, opts: { fitToContent: boolean; viewportZoomFactor: number; animate: boolean }): void;
 };
 
 export function App() {
@@ -23,10 +24,21 @@ export function App() {
       .then((scene) => setInitial({ elements: restoreElements(scene.elements, null) as unknown[], scrollToContent: true }));
   }, []);
 
+  const fit = useCallback(() => {
+    if (!api || api.getSceneElements().length === 0) return;
+    api.scrollToContent(api.getSceneElements(), { fitToContent: true, viewportZoomFactor: 0.8, animate: false });
+  }, [api]);
+
   useEffect(() => {
     if (!api) return;
-    requestAnimationFrame(() => api.scrollToContent(undefined, { fit: true, viewportZoomFactor: 0.85, animate: false }));
-  }, [api]);
+    (window as unknown as { sketchpactApi: unknown }).sketchpactApi = api;
+    let tries = 0;
+    const tick = () => {
+      if (api.getSceneElements().length > 0) fit();
+      else if (tries++ < 60) requestAnimationFrame(tick);
+    };
+    tick();
+  }, [api, fit]);
 
   useEffect(() => {
     if (!api) return;
@@ -36,6 +48,7 @@ export function App() {
       const msg = JSON.parse(e.data);
       if (msg.type === "turn") {
         setTurn({ turn: msg.turn, phase: msg.phase, message: msg.message });
+        if (msg.phase === "user") requestAnimationFrame(fit);
         return;
       }
       if (msg.type !== "scene") return;
@@ -45,7 +58,7 @@ export function App() {
       queueMicrotask(() => (applyingRemote.current = false));
     };
     return () => socket.close();
-  }, [api]);
+  }, [api, fit]);
 
   const onChange = useCallback((elements: readonly unknown[]) => {
     if (applyingRemote.current) return;
