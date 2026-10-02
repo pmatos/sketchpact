@@ -103,4 +103,4 @@ The detached canvas server does not reload on code changes: kill the pid in `.sk
 
 ## License
 
-Not yet licensed; the package is marked private.
+[MIT](LICENSE)
