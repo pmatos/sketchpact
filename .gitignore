@@ -3,3 +3,5 @@ dist
 .sketchpact
 src/web/public/excalidraw-assets
 .playwright-mcp
+
+.claude/settings.local.json
