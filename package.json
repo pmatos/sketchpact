@@ -1,8 +1,7 @@
 {
   "name": "sketchpact",
   "version": "0.1.0",
-  "description": "",
-  "main": "index.js",
+  "description": "A local-only shared Excalidraw whiteboard where Claude Code (over MCP) and a human design together and record the agreed decision.",
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc",
@@ -13,11 +12,19 @@
     "postinstall": "node scripts/copy-assets.mjs",
     "debate": "node scripts/debate.mjs"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": ["excalidraw", "whiteboard", "mcp", "claude-code", "design", "architecture-decision-records"],
+  "author": "Paulo Matos <p@ocmatos.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pmatos/sketchpact.git"
+  },
+  "homepage": "https://github.com/pmatos/sketchpact#readme",
+  "bugs": {
+    "url": "https://github.com/pmatos/sketchpact/issues"
+  },
   "type": "module",
-  "private": "true",
+  "private": true,
   "dependencies": {
     "@excalidraw/excalidraw": "^0.18.1",
     "@modelcontextprotocol/sdk": "^1.31.0",
