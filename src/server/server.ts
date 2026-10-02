@@ -4,11 +4,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import { z } from "zod";
-import { autoLayout } from "../shared/autolayout";
-import { layoutIssues } from "../shared/issues";
+import { OpSchema } from "../shared/ops";
+import { AGENT_ID, AgentRegistry } from "./agents";
+import { CONTENDED_MESSAGE, ContendedError, createBoard } from "./board";
 import { LayoutState } from "./layoutState";
-import { applyOps, ensureAgentCluster, OpSchema, type Actor, type Op } from "../shared/ops";
-import { AGENT_ID, AgentRegistry, Mutex } from "./agents";
 import { TurnError, TurnManager } from "./turns";
 import { SceneStore, type Scene } from "./store";
 
@@ -28,7 +27,6 @@ export async function startCanvasServer(opts: CanvasServerOptions): Promise<Canv
   const store = new SceneStore(opts.dataDir);
   const layout = new LayoutState(opts.dataDir);
   const agents = new AgentRegistry(opts.dataDir);
-  const mutex = new Mutex();
 
   const turns = new TurnManager({
     dataDir: opts.dataDir,
@@ -70,43 +68,7 @@ export async function startCanvasServer(opts: CanvasServerOptions): Promise<Canv
     res.end(JSON.stringify(body));
   };
 
-  async function commitElements(scene: Scene, before: Record<string, any>[], elements: Record<string, any>[], layoutOp?: Extract<Op, { op: "layout" }>) {
-    const forced = layoutOp !== undefined;
-    const mode = forced ? "forced" : layout.isUntouched(before) ? "auto" : "kept";
-    let laid = elements;
-    if (mode !== "kept") {
-      const direction = layoutOp?.direction || layout.direction || undefined;
-      laid = await autoLayout(elements, { direction });
-      layout.record(laid, direction);
-    }
-    store.set({ ...scene, elements: laid });
-    broadcast();
-    return { mode, elements: laid };
-  }
-
-  async function runOps(ops: Op[], actor?: Actor): Promise<{ status: number; body: unknown }> {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const version = store.version;
-      const scene = store.get();
-      const before = scene.elements as Record<string, any>[];
-      const result = applyOps(before, ops, { actor });
-      if (!result.ok) return { status: 422, body: result };
-      const layoutOp = ops.filter((o): o is Extract<Op, { op: "layout" }> => o.op === "layout").pop();
-      const forced = layoutOp !== undefined;
-      const mode = forced ? "forced" : layout.isUntouched(before) ? "auto" : "kept";
-      let laid = result.elements;
-      if (mode !== "kept") {
-        const direction = layoutOp?.direction || layout.direction || undefined;
-        laid = await autoLayout(laid, { direction });
-        if (store.version !== version) continue;
-        layout.record(laid, direction);
-      } else if (store.version !== version) continue;
-      store.set({ ...scene, elements: laid });
-      broadcast();
-      return { status: 200, body: { ok: true, layout: mode, issues: layoutIssues(laid) } };
-    }
-    return { status: 409, body: { ok: false, errors: [{ index: -1, message: "the board kept changing while applying; try again" }] } };
-  }
+  const board = createBoard({ store, layout, agents, onChange: () => broadcast() });
 
   const http: Server = createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/health") return json(res, 200, { ok: true });
@@ -126,14 +88,13 @@ export async function startCanvasServer(opts: CanvasServerOptions): Promise<Canv
         return json(res, 400, { error: "invalid JSON" });
       }
       if (typeof body.id !== "string" || !AGENT_ID.test(body.id)) return json(res, 400, { error: "id must match [a-z0-9][a-z0-9-]{0,30}" });
-      const info = agents.register(body.id, body.label);
-      await mutex.run(async () => {
-        const scene = store.get();
-        const before = scene.elements as Record<string, any>[];
-        const withCluster = ensureAgentCluster(before, { id: info.id, label: info.label });
-        if (withCluster.length === before.length) return;
-        await commitElements(scene, before, withCluster);
-      });
+      let info;
+      try {
+        info = await board.registerAgent(body.id, body.label);
+      } catch (err) {
+        if (err instanceof ContendedError) return json(res, 409, { error: err.message });
+        throw err;
+      }
       turns.refresh();
       return json(res, 200, { ...info, agents: agents.list() });
     }
@@ -149,14 +110,11 @@ export async function startCanvasServer(opts: CanvasServerOptions): Promise<Canv
         const errors = parsed.error.issues.map((i) => ({ index: Number(i.path[1] ?? -1), message: `${i.path.slice(2).join(".") || "op"}: ${i.message}` }));
         return json(res, 400, { ok: false, errors });
       }
-      let actor: Actor | undefined;
-      if (parsed.data.agent !== undefined) {
-        const info = agents.get(parsed.data.agent);
-        if (!info) return json(res, 400, { ok: false, errors: [{ index: -1, message: `unknown agent "${parsed.data.agent}": register first` }] });
-        actor = { id: info.id, cluster: info.cluster, color: info.color };
-      }
-      const outcome = await mutex.run(() => runOps(parsed.data.ops, actor));
-      return json(res, outcome.status, outcome.body);
+      const out = await board.applyOps(parsed.data.ops, parsed.data.agent);
+      if (out.status === "applied") return json(res, 200, { ok: true, layout: out.layout, issues: out.issues });
+      if (out.status === "invalid") return json(res, 422, out.result);
+      if (out.status === "unknown_agent") return json(res, 400, { ok: false, errors: [{ index: -1, message: `unknown agent "${out.agent}": register first` }] });
+      return json(res, 409, { ok: false, errors: [{ index: -1, message: CONTENDED_MESSAGE }] });
     }
     if (req.method === "POST" && (req.url === "/api/turn/yield" || req.url === "/api/turn/respond" || req.url === "/api/turn/skip")) {
       let body: { message?: string; timeoutMs?: number; kind?: string; comment?: string; allowLayoutProblems?: boolean; agent?: string };
@@ -168,17 +126,8 @@ export async function startCanvasServer(opts: CanvasServerOptions): Promise<Canv
       try {
         if (req.url === "/api/turn/yield") {
           if (body.message !== undefined) {
-            const elements = store.get().elements as Record<string, any>[];
-            const issues = layoutIssues(elements);
-            const userArranged = !layout.isUntouched(elements);
-            if (issues.length && (!userArranged || !body.allowLayoutProblems)) {
-              return json(res, 422, {
-                error: userArranged
-                  ? "The board has layout problems that come from the user's own arrangement. Do not move their shapes. Either send {op:'layout'} (only if the user has agreed to a re-layout), or yield again with allow_layout_problems=true and say in your message that you left their arrangement alone."
-                  : "The board has layout problems and must not be shown to the user as is. Fix them (e.g. send {op:'layout'}) and yield again.",
-                issues,
-              });
-            }
+            const gate = board.readability({ allowProblems: body.allowLayoutProblems });
+            if (!gate.ok) return json(res, 422, { error: gate.error, issues: gate.issues });
           }
           return json(res, 200, await turns.yield(body.message, body.timeoutMs, body.agent));
         }
