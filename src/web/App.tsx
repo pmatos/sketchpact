@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Excalidraw, restoreElements } from "@excalidraw/excalidraw";
+import { Excalidraw } from "@excalidraw/excalidraw";
 import { Panel, type TurnState } from "./Panel";
+import { useBoardSceneSync } from "./useBoardSceneSync";
 
 type Api = {
   getSceneElements(): readonly unknown[];
@@ -11,18 +12,7 @@ type Api = {
 
 export function App() {
   const [api, setApi] = useState<Api | null>(null);
-  const [initial, setInitial] = useState<{ elements: unknown[]; scrollToContent: boolean } | null>(null);
   const [turn, setTurn] = useState<TurnState>({ turn: 0, phase: "idle", message: "" });
-  const ws = useRef<WebSocket | null>(null);
-  const applyingRemote = useRef(false);
-  const lastSent = useRef("");
-  const timer = useRef<number | undefined>(undefined);
-
-  useEffect(() => {
-    fetch("/api/scene")
-      .then((r) => r.json())
-      .then((scene) => setInitial({ elements: restoreElements(scene.elements, null) as unknown[], scrollToContent: true }));
-  }, []);
 
   const lastFit = useRef<{ zoom: number; scrollX: number; scrollY: number } | null>(null);
 
@@ -41,6 +31,15 @@ export function App() {
     },
     [api],
   );
+
+  const receiveTurn = useCallback(
+    (next: TurnState) => {
+      setTurn(next);
+      if (next.phase === "user") requestAnimationFrame(() => fit(false));
+    },
+    [fit],
+  );
+  const sync = useBoardSceneSync(api, receiveTurn);
 
   const zoomBy = useCallback(
     (factor: number) => {
@@ -65,45 +64,14 @@ export function App() {
     tick();
   }, [api, fit]);
 
-  useEffect(() => {
-    if (!api) return;
-    const socket = new WebSocket(`ws://${location.host}/ws`);
-    ws.current = socket;
-    socket.onmessage = (e) => {
-      const msg = JSON.parse(e.data);
-      if (msg.type === "turn") {
-        setTurn({ turn: msg.turn, phase: msg.phase, message: msg.message, agents: msg.agents });
-        if (msg.phase === "user") requestAnimationFrame(() => fit(false));
-        return;
-      }
-      if (msg.type !== "scene") return;
-      applyingRemote.current = true;
-      lastSent.current = JSON.stringify(msg.elements);
-      api.updateScene({ elements: restoreElements(msg.elements, null) });
-      queueMicrotask(() => (applyingRemote.current = false));
-    };
-    return () => socket.close();
-  }, [api, fit]);
-
-  const onChange = useCallback((elements: readonly unknown[]) => {
-    if (applyingRemote.current) return;
-    window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => {
-      const payload = JSON.stringify(elements);
-      if (payload === lastSent.current || ws.current?.readyState !== WebSocket.OPEN) return;
-      lastSent.current = payload;
-      ws.current.send(JSON.stringify({ type: "update", scene: { elements } }));
-    }, 250);
-  }, []);
-
   return (
     <div className="layout">
       <div className="canvas">
-        {initial && (
+        {sync.initialData && (
           <Excalidraw
-            initialData={initial as never}
+            initialData={sync.initialData as never}
             excalidrawAPI={(a) => setApi(a as unknown as Api)}
-            onChange={onChange as never}
+            onChange={sync.onChange as never}
           />
         )}
       </div>

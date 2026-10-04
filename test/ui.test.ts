@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { setTimeout as delay } from "node:timers/promises";
 import { join, resolve } from "node:path";
 import { chromium, type Browser } from "playwright-core";
 import { startCanvasServer, type CanvasServer } from "../src/server/server";
@@ -55,6 +56,51 @@ describe("side panel", () => {
     await agree.click();
     expect((await second).body).toMatchObject({ turn: 2, agreed: true });
     await expect.poll(() => page.getByTestId("turn-status").textContent()).toMatch(/Agreed/);
+    await page.close();
+  }, 30_000);
+});
+
+describe("board sync", () => {
+  it("does not echo a remotely applied board back to the server", async () => {
+    const page = await browser.newPage();
+    await page.goto(base);
+    await expect.poll(() => page.evaluate(() => "sketchpactApi" in window), { timeout: 10_000 }).toBe(true);
+
+    const observer = new WebSocket(base.replace(/^http/, "ws") + "/ws");
+    const messages: { type: string }[] = [];
+    observer.addEventListener("message", (event) => {
+      const parsed: unknown = JSON.parse(String(event.data));
+      if (typeof parsed === "object" && parsed !== null && "type" in parsed && typeof parsed.type === "string") {
+        messages.push({ type: parsed.type });
+      }
+    });
+    // WebSocket's EventTarget interface supplies completion through callbacks.
+    await new Promise<void>((resolve, reject) => {
+      observer.addEventListener("open", () => resolve());
+      observer.addEventListener("error", () => reject(new Error("ws error")));
+    });
+    await expect.poll(() => messages.map((message) => message.type).sort()).toEqual(["scene", "turn"]);
+    messages.length = 0;
+
+    const remote = [{ id: "remote", type: "rectangle", x: 10, y: 20, width: 160, height: 80 }];
+    await putScene(base, remote);
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          if (!("sketchpactApi" in window)) return false;
+          const api = window.sketchpactApi;
+          if (typeof api !== "object" || api === null || !("getSceneElements" in api) || typeof api.getSceneElements !== "function") return false;
+          const elements: unknown = api.getSceneElements();
+          return Array.isArray(elements) && elements.some((element: unknown) => typeof element === "object" && element !== null && "id" in element && element.id === "remote");
+        }),
+      )
+      .toBe(true);
+
+    // This integration assertion deliberately crosses the real 250 ms browser debounce.
+    await delay(500);
+    expect(messages.filter((message) => message.type === "scene")).toHaveLength(1);
+
+    observer.close();
     await page.close();
   }, 30_000);
 });
