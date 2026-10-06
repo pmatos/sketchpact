@@ -11,6 +11,11 @@ export interface AgentInfo {
   cluster: string;
 }
 
+export interface PreparedAgent {
+  info: AgentInfo;
+  publish(): void;
+}
+
 export const AGENT_ID = /^[a-z0-9][a-z0-9-]{0,30}$/;
 
 export class AgentRegistry {
@@ -34,9 +39,9 @@ export class AgentRegistry {
     return this.agents.find((a) => a.id === id);
   }
 
-  register(id: string, label?: string): AgentInfo {
+  prepare(id: string, label?: string): PreparedAgent {
     const existing = this.get(id);
-    if (existing) return existing;
+    if (existing) return { info: existing, publish: () => {} };
     const info: AgentInfo = {
       id,
       label: label || id.charAt(0).toUpperCase() + id.slice(1),
@@ -44,9 +49,14 @@ export class AgentRegistry {
       scribe: this.agents.length === 0,
       cluster: id,
     };
-    this.agents.push(info);
-    writeFileSync(this.file, JSON.stringify(this.agents, null, 2));
-    return info;
+    return {
+      info,
+      publish: () => {
+        const next = [...this.agents, info];
+        writeFileSync(this.file, JSON.stringify(next, null, 2));
+        this.agents = next;
+      },
+    };
   }
 }
 

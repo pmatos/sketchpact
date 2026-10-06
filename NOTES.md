@@ -112,3 +112,7 @@
 ### Browser Board synchronization module (pm-deepen)
 - `App.tsx` used to own the initial scene fetch, multiplexed WebSocket protocol, Excalidraw restoration, remote-echo guard, serialization baseline and debounced writes alongside viewport rendering. They now live behind `useBoardSceneSync(sceneTarget, onTurn)`; App retains only turn presentation and viewport policy.
 - **Bug exposed by the seam test:** the old remote baseline serialized the raw server elements, but Excalidraw's `onChange` reports restored elements with normalized fields. If `onChange` ran after the microtask guard cleared, the unequal payload was sent back to the server as a spurious second scene update. The sync module records the restored payload it actually applies, and a real-browser WebSocket observer pins that a remote update is broadcast exactly once.
+
+### Agent registration commit order (pm-deepen)
+- The Board's retry loop can reject registration after three concurrent scene writes, but the registry used to persist the agent before that loop. A 409 then left an agent (possibly the scribe) in `agents.json` with no owned frame, and retrying could not assign the role afresh.
+- The registry now prepares an uncommitted candidate under the Board mutex. Only after the frame passes the version check and commits does it publish the agent; notification follows publication. A failed attempt consumes neither the first scribe role nor a palette slot. The Board seam test checks both in-memory and persisted registration after contention, then a successful retry.
