@@ -116,3 +116,6 @@
 ### Agent registration commit order (pm-deepen)
 - The Board's retry loop can reject registration after three concurrent scene writes, but the registry used to persist the agent before that loop. A 409 then left an agent (possibly the scribe) in `agents.json` with no owned frame, and retrying could not assign the role afresh.
 - The registry now prepares an uncommitted candidate under the Board mutex. Only after the frame passes the version check and commits does it publish the agent; notification follows publication. A failed attempt consumes neither the first scribe role nor a palette slot. The Board seam test checks both in-memory and persisted registration after contention, then a successful retry.
+
+### Scene publication (pm-deepen)
+- WebSocket updates, HTTP scene writes and Board edits each paired a store write with a scene broadcast. They now use one server-local `publish` interface, which writes first and sends the resulting scene to connected clients, excluding the WebSocket sender when applicable. Board registration passes its registry publication as an `afterPersist` hook so the registered agent is visible before clients receive its frame; idempotent registration still sends nothing.

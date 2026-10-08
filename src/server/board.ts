@@ -3,7 +3,7 @@ import { layoutIssues, type LayoutIssue } from "../shared/issues";
 import { applyOps, ensureAgentCluster, type Actor, type ApplyResult, type Op } from "../shared/ops";
 import { Mutex, type AgentInfo, type AgentRegistry } from "./agents";
 import type { Direction, LayoutState } from "./layoutState";
-import type { SceneStore } from "./store";
+import type { Scene, SceneStore } from "./store";
 
 type El = Record<string, any>;
 type LayoutOp = Extract<Op, { op: "layout" }>;
@@ -23,7 +23,7 @@ export interface BoardDeps {
   store: SceneStore;
   layout: LayoutState;
   agents: AgentRegistry;
-  onChange(): void;
+  publish(scene: Scene, opts?: { afterPersist?: () => void }): void;
   relayout?: typeof autoLayout;
 }
 
@@ -47,13 +47,13 @@ type Change = { kind: "unchanged" } | { kind: "invalid"; result: Rejected } | { 
 type Committed = { status: "unchanged" } | { status: "invalid"; result: Rejected } | { status: "committed"; mode: LayoutMode; elements: El[] } | { status: "contended" };
 
 export function createBoard(deps: BoardDeps): Board {
-  const { store, layout, agents, onChange } = deps;
+  const { store, layout, agents, publish } = deps;
   const relayout = deps.relayout ?? autoLayout;
   const mutex = new Mutex();
 
   const modeFor = (before: readonly El[], layoutOp?: LayoutOp): LayoutMode => (layoutOp ? "forced" : layout.isUntouched(before) ? "auto" : "kept");
 
-  async function commit(build: (before: El[]) => Change): Promise<Committed> {
+  async function commit(build: (before: El[]) => Change, afterPersist?: () => void): Promise<Committed> {
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       const version = store.version;
       const scene = store.get();
@@ -71,7 +71,7 @@ export function createBoard(deps: BoardDeps): Board {
       }
       if (store.version !== version) continue;
       if (mode !== "kept") layout.record(laid, direction);
-      store.set({ ...scene, elements: laid });
+      publish({ ...scene, elements: laid }, afterPersist ? { afterPersist } : undefined);
       return { status: "committed", mode, elements: laid };
     }
     return { status: "contended" };
@@ -86,14 +86,12 @@ export function createBoard(deps: BoardDeps): Board {
         actor = { id: info.id, cluster: info.cluster, color: info.color };
       }
       const layoutOp = ops.filter((o): o is LayoutOp => o.op === "layout").pop();
-      const out = await mutex.run(async () => {
-        const result = await commit((before) => {
+      const out = await mutex.run(() =>
+        commit((before) => {
           const result = applyOps(before, ops, { actor });
           return result.ok ? { kind: "changed", elements: result.elements, layoutOp } : { kind: "invalid", result };
-        });
-        if (result.status === "committed") onChange();
-        return result;
-      });
+        }),
+      );
       if (out.status === "committed") {
         return { status: "applied", layout: out.mode, issues: layoutIssues(out.elements) };
       }
@@ -108,10 +106,9 @@ export function createBoard(deps: BoardDeps): Board {
           const info = prepared.info;
           const elements = ensureAgentCluster(before, { id: info.id, label: info.label });
           return elements.length === before.length ? { kind: "unchanged" } : { kind: "changed", elements };
-        });
+        }, prepared.publish);
         if (out.status === "contended") throw new ContendedError();
-        prepared.publish();
-        if (out.status === "committed") onChange();
+        if (out.status === "unchanged") prepared.publish();
         return prepared.info;
       });
     },
