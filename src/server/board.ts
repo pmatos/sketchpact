@@ -72,7 +72,6 @@ export function createBoard(deps: BoardDeps): Board {
       if (store.version !== version) continue;
       if (mode !== "kept") layout.record(laid, direction);
       store.set({ ...scene, elements: laid });
-      onChange();
       return { status: "committed", mode, elements: laid };
     }
     return { status: "contended" };
@@ -87,27 +86,34 @@ export function createBoard(deps: BoardDeps): Board {
         actor = { id: info.id, cluster: info.cluster, color: info.color };
       }
       const layoutOp = ops.filter((o): o is LayoutOp => o.op === "layout").pop();
-      const out = await mutex.run(() =>
-        commit((before) => {
+      const out = await mutex.run(async () => {
+        const result = await commit((before) => {
           const result = applyOps(before, ops, { actor });
           return result.ok ? { kind: "changed", elements: result.elements, layoutOp } : { kind: "invalid", result };
-        }),
-      );
-      if (out.status === "committed") return { status: "applied", layout: out.mode, issues: layoutIssues(out.elements) };
+        });
+        if (result.status === "committed") onChange();
+        return result;
+      });
+      if (out.status === "committed") {
+        return { status: "applied", layout: out.mode, issues: layoutIssues(out.elements) };
+      }
       if (out.status === "invalid") return out;
       return { status: "contended" };
     },
 
     async registerAgent(id, label) {
-      const info = agents.register(id, label);
-      const out = await mutex.run(() =>
-        commit((before) => {
+      return mutex.run(async () => {
+        const prepared = agents.prepare(id, label);
+        const out = await commit((before) => {
+          const info = prepared.info;
           const elements = ensureAgentCluster(before, { id: info.id, label: info.label });
           return elements.length === before.length ? { kind: "unchanged" } : { kind: "changed", elements };
-        }),
-      );
-      if (out.status === "contended") throw new ContendedError();
-      return info;
+        });
+        if (out.status === "contended") throw new ContendedError();
+        prepared.publish();
+        if (out.status === "committed") onChange();
+        return prepared.info;
+      });
     },
 
     readability({ allowProblems } = {}) {

@@ -21,6 +21,8 @@ const CHAIN: Op[] = [
 ];
 
 let store: SceneStore;
+let agents: AgentRegistry;
+let boardDir: string;
 let changes: number;
 
 const elements = () => store.get().elements as El[];
@@ -28,12 +30,14 @@ const byId = (id: string) => elements().find((e) => e.id === id)!;
 
 function make(overrides: Partial<BoardDeps> = {}): Board {
   const dir = mkdtempSync(join(tmpdir(), "sketchpact-board-"));
+  boardDir = dir;
   store = new SceneStore(dir);
+  agents = new AgentRegistry(dir);
   changes = 0;
   return createBoard({
     store,
     layout: new LayoutState(dir),
-    agents: new AgentRegistry(dir),
+    agents,
     onChange: () => changes++,
     ...overrides,
   });
@@ -203,14 +207,26 @@ describe("Board contention", () => {
     expect(changes).toBe(before);
   });
 
-  it("rejects registration when the board keeps changing", async () => {
+  it("does not publish registration until its frame commits", async () => {
+    let contended = true;
     const board = make({
       relayout: async (els) => {
-        store.set({ ...store.get() });
+        if (contended) store.set({ ...store.get() });
         return [...els];
       },
     });
     await expect(board.registerAgent("a")).rejects.toBeInstanceOf(ContendedError);
+    expect(agents.get("a")).toBeUndefined();
+    expect(new AgentRegistry(boardDir).get("a")).toBeUndefined();
+    expect(elements()).toEqual([]);
+    expect(changes).toBe(0);
+
+    contended = false;
+    const info = await board.registerAgent("a");
+    expect(info).toMatchObject({ id: "a", scribe: true, color: "#b2f2bb" });
+    expect(new AgentRegistry(boardDir).get("a")).toEqual(info);
+    expect(elements().filter((e) => e.type === "frame" && e.customData?.owner === "a")).toHaveLength(1);
+    expect(changes).toBe(1);
   });
 });
 
