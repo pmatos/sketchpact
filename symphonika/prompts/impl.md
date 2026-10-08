@@ -11,7 +11,7 @@ or stale, re-derive it from the issue first (`gh issue view {{issue.number}}`).
 Stay on branch `{{branch.name}}` in `{{workspace.path}}` — do not switch or create another branch.
 If a previous attempt left work here, `git log main..HEAD` shows it.
 
-`CLAUDE.md` (which imports `AGENTS.md`) governs everything else in this repo — architecture,
+`AGENTS.md` governs everything else in this repo — architecture,
 conventions, and gotchas. Defer to it. Update `NOTES.md` and the `skills/whiteboard-*` text when your
 change warrants it, as `AGENTS.md` says.
 
@@ -75,13 +75,19 @@ mutation.
 - Remove the readiness label: `gh issue edit {{issue.number}} --remove-label agent-ready`.
 - Do **not** apply `needs-human` or any `sym:*` label as an exit strategy. The operator owns those.
 - Do **not** merge the PR, and do **not** wait on it. The orchestrator owns the merge: once the PR
-  is open it drives the `wait_for_pr` / `merge` states. Exit as soon as the PR is open.
+  is open it drives the `wait_for_pr` / `merge` states. Finish as soon as the PR is open (see Exit).
 
 ## If you cannot proceed
 
-Write `{{workspace.path}}/BLOCKED.md` with what blocked you and what would unblock it, post the same
-explanation with `gh issue comment {{issue.number}} --body "<explanation>"`, and exit cleanly. Do not
-self-apply `needs-human` or any handoff label.
+Post what blocked you and what would unblock it with
+`gh issue comment {{issue.number}} --body "<explanation>"`, then end with a `blocked` claim carrying
+the same explanation. Do not self-apply `needs-human` or any handoff label.
+
+## Exit
+
+Once the pull request is open and `agent-ready` is removed, end with a `success` claim. The
+orchestrator drives the PR from there. A Bash tool call's `exit 1` only ends that subshell, not the
+provider session, so the final claim is what the FSM gates this state's advance on.
 
 ## Defer to this contract
 
