@@ -38,7 +38,11 @@ function make(overrides: Partial<BoardDeps> = {}): Board {
     store,
     layout: new LayoutState(dir),
     agents,
-    onChange: () => changes++,
+    publish: (scene, opts) => {
+      store.set(scene);
+      opts?.afterPersist?.();
+      changes++;
+    },
     ...overrides,
   });
 }
@@ -110,6 +114,26 @@ describe("Board layout mode", () => {
 });
 
 describe("Board rejections", () => {
+  it("publishes committed scenes through one interface after agent metadata is visible", async () => {
+    const publications: { version: number; agents: string[]; elements: number }[] = [];
+    const board = make({
+      publish: (scene, opts) => {
+        store.set(scene);
+        opts?.afterPersist?.();
+        publications.push({ version: store.version, agents: agents.list().map((a) => a.id), elements: scene.elements.length });
+      },
+    });
+
+    await board.applyOps([{ op: "add_node", id: "n", label: "N" }]);
+    await board.registerAgent("a");
+
+    expect(publications).toEqual([
+      { version: 1, agents: [], elements: expect.any(Number) },
+      { version: 2, agents: ["a"], elements: expect.any(Number) },
+    ]);
+    expect(publications[1]!.elements).toBeGreaterThan(publications[0]!.elements);
+  });
+
   it("applies nothing and publishes nothing when an op is invalid", async () => {
     const board = make();
     const out = await board.applyOps([

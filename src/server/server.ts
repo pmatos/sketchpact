@@ -45,6 +45,11 @@ export async function startCanvasServer(opts: CanvasServerOptions): Promise<Canv
     const msg = sceneMessage();
     for (const c of wss.clients) if (c !== except && c.readyState === c.OPEN) c.send(msg);
   };
+  const publish = (scene: Scene, opts: { except?: WebSocket; afterPersist?: () => void } = {}) => {
+    store.set(scene);
+    opts.afterPersist?.();
+    broadcast(opts.except);
+  };
 
   wss.on("connection", (ws) => {
     ws.send(sceneMessage());
@@ -53,8 +58,7 @@ export async function startCanvasServer(opts: CanvasServerOptions): Promise<Canv
       try {
         const m = JSON.parse(String(data));
         if (m.type === "update" && Array.isArray(m.scene?.elements)) {
-          store.set(m.scene);
-          broadcast(ws);
+          publish(m.scene, { except: ws });
         }
       } catch {
         // ignore malformed frames
@@ -68,7 +72,7 @@ export async function startCanvasServer(opts: CanvasServerOptions): Promise<Canv
     res.end(JSON.stringify(body));
   };
 
-  const board = createBoard({ store, layout, agents, onChange: () => broadcast() });
+  const board = createBoard({ store, layout, agents, publish });
 
   const http: Server = createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/health") return json(res, 200, { ok: true });
@@ -149,8 +153,7 @@ export async function startCanvasServer(opts: CanvasServerOptions): Promise<Canv
         try {
           const scene = JSON.parse(await readBody(req)) as Scene;
           if (!Array.isArray(scene.elements)) return json(res, 400, { error: "elements must be an array" });
-          store.set(scene);
-          broadcast();
+          publish(scene);
           return json(res, 200, { ok: true });
         } catch {
           return json(res, 400, { error: "invalid JSON" });
