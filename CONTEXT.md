@@ -7,4 +7,5 @@ Domain terms used in Sketchpact's code and docs.
 - **Arranged by the user**: the board's shape positions differ from the ones recorded after the last layout (`LayoutState`). This is the single signal behind both the layout mode and the readability gate's message.
 - **Readability gate**: `yield_turn` is refused while the board has layout issues, unless they come from the user's own arrangement and the agent explicitly allows them.
 - **Semantic scene**: nodes, edges, clusters and notes derived from raw Excalidraw elements. Agents only ever see this.
+- **Label layout**: the shared wrapping, measurement and shape-fit policy in `src/shared/labels.ts`. `prepareLabel` preserves the unwrapped semantic text and produces display text plus required node dimensions; `labelFits` checks stored label dimensions for the readability gate, including human edits. Creation adds clearance beyond the shape's usable label area.
 - **Scribe**: the first agent whose registration and owned frame successfully commit; the only one that may record the decision. A contended registration does not claim this role.

@@ -119,3 +119,7 @@
 
 ### Scene publication (pm-deepen)
 - WebSocket updates, HTTP scene writes and Board edits each paired a store write with a scene broadcast. They now use one server-local `publish` interface, which writes first and sends the resulting scene to connected clients, excluding the WebSocket sender when applicable. Board registration passes its registry publication as an `afterPersist` hook so the registered agent is visible before clients receive its frame; idempotent registration still sends nothing.
+
+### Label layout (pm-deepen)
+- Shape creation and the readability gate each defined their own ellipse/diamond usable-area factors and rectangle inset. Wrapping, text measurement, required shape size and overflow checks now live behind `prepareLabel` and `labelFits` in `src/shared/labels.ts`. Factory callers retain element identity, positioning and binding; operation callers keep their existing placement and rename behavior.
+- The forward and inverse fit calculations share one shape policy, but creation deliberately adds clearance beyond the gate's usable area (16px for rectangles, 8px before scaling for ellipses/diamonds). That clearance is not the gate's 0.5px tolerance. The checker uses stored text dimensions instead of remeasuring the string, so human-edited labels are still checked as drawn. Seam tests pin the existing dimensions and tolerance independently, rather than only checking that producer and checker agree.

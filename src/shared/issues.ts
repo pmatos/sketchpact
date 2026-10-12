@@ -1,4 +1,5 @@
 import type { El } from "./factory";
+import { labelFits } from "./labels";
 
 export type IssueKind = "text-overflow" | "overlap" | "edge-crosses-node" | "label-collision" | "too-large" | "detached-edge";
 
@@ -16,8 +17,6 @@ export interface Box {
 }
 
 const SHAPES = new Set(["rectangle", "ellipse", "diamond"]);
-const INSCRIBED: Record<string, number> = { rectangle: 1, ellipse: 0.7, diamond: 0.5 };
-const RECT_INSET = 6;
 
 export const VIEW_W = 1200;
 export const VIEW_H = 850;
@@ -94,10 +93,7 @@ export function layoutIssues(elements: readonly El[]): LayoutIssue[] {
   for (const s of shapes) {
     const text = live.find((t) => t.type === "text" && t.containerId === s.id);
     if (!text) continue;
-    const k = INSCRIBED[s.type]!;
-    const innerW = k === 1 ? s.width - 2 * RECT_INSET : s.width * k;
-    const innerH = k === 1 ? s.height - 2 * RECT_INSET : s.height * k;
-    if (text.width > innerW + 0.5 || text.height > innerH + 0.5) {
+    if (!labelFits({ type: s.type, width: s.width, height: s.height }, { width: text.width, height: text.height })) {
       issues.push({ kind: "text-overflow", ids: [semantic(s)], message: `label of "${semantic(s)}" does not fit inside its ${s.type}` });
     }
   }
