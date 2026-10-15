@@ -1,3 +1,5 @@
+import { minimumNodeSize, prepareLabel, type PreparedText } from "./labels";
+
 export type El = Record<string, any>;
 
 const rnd = () => Math.floor(Math.random() * 2 ** 31);
@@ -33,54 +35,13 @@ function base(type: string, id: string, x: number, y: number, width: number, hei
   };
 }
 
-export const NODE_W = 160;
-export const NODE_H = 80;
+export const NODE_W = minimumNodeSize.width;
+export const NODE_H = minimumNodeSize.height;
 
 const SHAPE_TYPE = { rect: "rectangle", ellipse: "ellipse", diamond: "diamond" } as const;
 
-const CHAR_W = 12;
-const LINE_H = 25;
-const WRAP_AT = 18;
-const NOTE_WRAP_AT = 32;
-
-export function wrapText(text: string, max = WRAP_AT): string {
-  return text
-    .split("\n")
-    .map((para) => {
-      const lines: string[] = [];
-      let line = "";
-      for (const word of para.split(/\s+/).filter(Boolean)) {
-        if (line && line.length + 1 + word.length > max) {
-          lines.push(line);
-          line = word;
-        } else line = line ? `${line} ${word}` : word;
-      }
-      lines.push(line);
-      return lines.join("\n");
-    })
-    .join("\n");
-}
-
-const EDGE_FONT = 16;
-const EDGE_CHAR_W = 10;
-const EDGE_LINE_H = 20;
-const EDGE_WRAP_AT = 14;
-
-function measure(text: string, small = false) {
-  const lines = text.split("\n");
-  return small
-    ? { width: Math.max(...lines.map((l) => l.length)) * EDGE_CHAR_W, height: lines.length * EDGE_LINE_H }
-    : { width: Math.max(...lines.map((l) => l.length)) * CHAR_W, height: lines.length * LINE_H };
-}
-
-const INSCRIBED = { rect: 1, ellipse: 0.7, diamond: 0.5 } as const;
-
 export function sizeFor(kind: keyof typeof SHAPE_TYPE, label: string): { width: number; height: number } {
-  const { width, height } = measure(wrapText(label));
-  const k = INSCRIBED[kind];
-  const needW = kind === "rect" ? width + 12 + 16 : (width + 8) / k;
-  const needH = kind === "rect" ? height + 12 + 16 : (height + 8) / k;
-  return { width: Math.max(NODE_W, Math.ceil(needW / 10) * 10), height: Math.max(NODE_H, Math.ceil(needH / 10) * 10) };
+  return prepareLabel(label, kind).shape;
 }
 
 export function makeShape(kind: keyof typeof SHAPE_TYPE, id: string, x: number, y: number, label = ""): El {
@@ -92,11 +53,9 @@ export function makeShape(kind: keyof typeof SHAPE_TYPE, id: string, x: number, 
   };
 }
 
-function textFields(original: string, wrapped: string, containerId: string | null, fontSize = 20): El {
+function textFields(text: PreparedText, containerId: string | null): El {
   return {
-    text: wrapped,
-    originalText: original,
-    fontSize,
+    ...text,
     fontFamily: 5,
     textAlign: containerId ? "center" : "left",
     verticalAlign: containerId ? "middle" : "top",
@@ -107,19 +66,17 @@ function textFields(original: string, wrapped: string, containerId: string | nul
 }
 
 export function makeBoundText(id: string, container: El, text: string): El {
-  const small = container.type === "arrow";
-  const wrapped = wrapText(text, small ? EDGE_WRAP_AT : WRAP_AT);
-  const { width, height } = measure(wrapped, small);
+  const prepared = (container.type === "arrow" ? prepareLabel(text, "edge") : prepareLabel(text, "rect")).text;
+  const { width, height } = prepared;
   return {
     ...base("text", id, container.x + (container.width - width) / 2, container.y + (container.height - height) / 2, width, height),
-    ...textFields(text, wrapped, container.id, small ? EDGE_FONT : 20),
+    ...textFields(prepared, container.id),
   };
 }
 
 export function makeNote(id: string, x: number, y: number, text: string): El {
-  const wrapped = wrapText(text, NOTE_WRAP_AT);
-  const { width, height } = measure(wrapped);
-  return { ...base("text", id, x, y, width, height, id), ...textFields(text, wrapped, null) };
+  const prepared = prepareLabel(text, "note").text;
+  return { ...base("text", id, x, y, prepared.width, prepared.height, id), ...textFields(prepared, null) };
 }
 
 export function makeFrame(id: string, name: string, x: number, y: number, width: number, height: number): El {
