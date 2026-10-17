@@ -1,9 +1,55 @@
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { excalidrawDocument } from "../shared/excalidraw-file";
+import { formatScene } from "../shared/format";
+import { extractScene } from "../shared/scene";
+import { fetchScene, fetchTurn, listAgents } from "./canvas";
 
 export const REQUIRED_SECTIONS = ["Context", "Options considered", "Decision", "Consequences"];
 
-export function slugify(title: string): string {
+export interface RecordDecisionInput {
+  root: string;
+  canvasUrl: string;
+  agentId?: string;
+  title: string;
+  body: string;
+}
+
+export type RecordDecisionResult =
+  | { ok: true; record: string; diagram: string }
+  | { ok: false; error: string };
+
+/** Record the live Board only after Scribe, agreement and body checks pass. */
+export async function recordDecision(input: RecordDecisionInput): Promise<RecordDecisionResult> {
+  const { root, canvasUrl, agentId, title, body } = input;
+  const turn = await fetchTurn(canvasUrl);
+  if (agentId !== undefined) {
+    const agents = await listAgents(canvasUrl);
+    const scribe = agents.find((a) => a.scribe);
+    if (scribe && scribe.id !== agentId) {
+      return { ok: false, error: `Only the scribe ("${scribe.id}") records the decision. Your part is done once the arbiter has agreed.\n` };
+    }
+  }
+  if (turn.phase !== "agreed") {
+    return { ok: false, error: `The user has not agreed yet (turn phase: ${turn.phase}). Keep going with yield_turn until it returns agreed: true.\n` };
+  }
+  const missing = missingSections(body);
+  if (missing.length) return { ok: false, error: `Body is missing required sections: ${missing.join(", ")}. Nothing was written.\n` };
+  const scene = await fetchScene(canvasUrl);
+  return {
+    ok: true,
+    ...writeDecision({
+      root,
+      title,
+      body,
+      turn: turn.turn,
+      sceneYaml: formatScene(extractScene(scene.elements)),
+      diagram: excalidrawDocument(scene),
+    }),
+  };
+}
+
+function slugify(title: string): string {
   const slug = title
     .normalize("NFKD")
     .replace(/[̀-ͯ]/g, "")
@@ -15,7 +61,7 @@ export function slugify(title: string): string {
   return slug || "decision";
 }
 
-export function missingSections(body: string): string[] {
+function missingSections(body: string): string[] {
   return REQUIRED_SECTIONS.filter((s) => !new RegExp(`^#{1,6}\\s+${s}\\s*$`, "im").test(body));
 }
 
@@ -32,7 +78,7 @@ function nextNumber(dir: string): number {
   return max + 1;
 }
 
-export interface DecisionInput {
+interface DecisionInput {
   root: string;
   title: string;
   body: string;
@@ -42,7 +88,7 @@ export interface DecisionInput {
   date?: string;
 }
 
-export function writeDecision(input: DecisionInput): { record: string; diagram: string } {
+function writeDecision(input: DecisionInput): { record: string; diagram: string } {
   const dir = join(input.root, "docs", "decisions");
   mkdirSync(dir, { recursive: true });
   const num = String(nextNumber(dir)).padStart(4, "0");

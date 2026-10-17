@@ -4,9 +4,8 @@ import { diffScenes } from "../shared/diff";
 import { formatDiff, formatScene } from "../shared/format";
 import { OpSchema } from "../shared/ops";
 import { extractScene } from "../shared/scene";
-import { excalidrawDocument } from "../shared/excalidraw-file";
-import { ensureCanvas, fetchDiff, fetchElements, fetchScene, fetchTurn, listAgents, postOps, registerAgent, yieldTurn } from "./canvas";
-import { missingSections, REQUIRED_SECTIONS, writeDecision } from "./decisions";
+import { ensureCanvas, fetchDiff, fetchElements, listAgents, postOps, registerAgent, yieldTurn } from "./canvas";
+import { recordDecision, REQUIRED_SECTIONS } from "./decisions";
 
 const text = (t: string, isError = false) => ({ content: [{ type: "text" as const, text: t }], ...(isError ? { isError } : {}) });
 
@@ -126,29 +125,8 @@ export function createMcpServer(root: string, agent?: AgentIdentity): McpServer 
     },
     async ({ title, body }) => {
       const { url } = await canvas();
-      const turn = await fetchTurn(url);
-      if (agent) {
-        const agents = await listAgents(url);
-        const scribe = agents.find((a) => a.scribe);
-        if (scribe && scribe.id !== agent.id) {
-          return text(`Only the scribe ("${scribe.id}") records the decision. Your part is done once the arbiter has agreed.\n`, true);
-        }
-      }
-      if (turn.phase !== "agreed") {
-        return text(`The user has not agreed yet (turn phase: ${turn.phase}). Keep going with yield_turn until it returns agreed: true.\n`, true);
-      }
-      const missing = missingSections(body);
-      if (missing.length) return text(`Body is missing required sections: ${missing.join(", ")}. Nothing was written.\n`, true);
-      const scene = await fetchScene(url);
-      const written = writeDecision({
-        root,
-        title,
-        body,
-        turn: turn.turn,
-        sceneYaml: formatScene(extractScene(scene.elements)),
-        diagram: excalidrawDocument(scene),
-      });
-      return text(`Saved ${written.record} and ${written.diagram}\n`);
+      const result = await recordDecision({ root, canvasUrl: url, agentId: me, title, body });
+      return result.ok ? text(`Saved ${result.record} and ${result.diagram}\n`) : text(result.error, true);
     },
   );
 
