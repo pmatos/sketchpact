@@ -1,4 +1,5 @@
 import { minimumNodeSize, prepareLabel, type PreparedText } from "./labels";
+import { readArrow, setArrowRoute } from "./labelpos";
 
 export type El = Record<string, any>;
 
@@ -68,8 +69,9 @@ function textFields(text: PreparedText, containerId: string | null): El {
 export function makeBoundText(id: string, container: El, text: string): El {
   const prepared = (container.type === "arrow" ? prepareLabel(text, "edge") : prepareLabel(text, "rect")).text;
   const { width, height } = prepared;
+  const position = container.type === "arrow" ? readArrow(container).labelBounds(prepared) : undefined;
   return {
-    ...base("text", id, container.x + (container.width - width) / 2, container.y + (container.height - height) / 2, width, height),
+    ...base("text", id, position?.x ?? container.x + (container.width - width) / 2, position?.y ?? container.y + (container.height - height) / 2, width, height),
     ...textFields(prepared, container.id),
   };
 }
@@ -84,11 +86,8 @@ export function makeFrame(id: string, name: string, x: number, y: number, width:
 }
 
 export function makeArrow(id: string, points: { x: number; y: number }[], from: El, to: El): El {
-  const [start, ...rest] = points as [{ x: number; y: number }, ...{ x: number; y: number }[]];
-  const last = rest[rest.length - 1]!;
-  return {
-    ...base("arrow", id, start.x, start.y, Math.abs(last.x - start.x), Math.abs(last.y - start.y), id),
-    points: [[0, 0], ...rest.map((p) => [p.x - start.x, p.y - start.y])],
+  const arrow = {
+    ...base("arrow", id, 0, 0, 0, 0, id),
     startBinding: { elementId: from.id, focus: 0, gap: 4 },
     endBinding: { elementId: to.id, focus: 0, gap: 4 },
     startArrowhead: null,
@@ -97,16 +96,10 @@ export function makeArrow(id: string, points: { x: number; y: number }[], from: 
     lastCommittedPoint: null,
     roundness: { type: 2 },
   };
+  setArrowRoute(arrow, points);
+  return arrow;
 }
 
 export function bind(el: El, ref: { id: string; type: "text" | "arrow" }): void {
   el.boundElements = [...(el.boundElements ?? []), ref];
-}
-
-export function setArrowGeometry(arrow: El, start: { x: number; y: number }, end: { x: number; y: number }): void {
-  arrow.x = start.x;
-  arrow.y = start.y;
-  arrow.points = [[0, 0], [end.x - start.x, end.y - start.y]];
-  arrow.width = Math.abs(end.x - start.x);
-  arrow.height = Math.abs(end.y - start.y);
 }

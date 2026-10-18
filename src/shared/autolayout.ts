@@ -1,7 +1,7 @@
 import ELK from "elkjs/lib/elk.bundled.js";
 import type { El } from "./factory";
 import { boundsOf, fitScale, layoutIssues } from "./issues";
-import { chooseLabelSpot, withLabelAt, type Point } from "./labelpos";
+import { placeRoutedArrows, type Point } from "./labelpos";
 
 export interface LayoutOptions {
   direction?: "RIGHT" | "DOWN";
@@ -228,37 +228,7 @@ export async function layoutOnce(input: readonly El[], direction: "RIGHT" | "DOW
     );
   }
 
-  const obstacles = elements.filter((e) => !e.isDeleted && (SHAPES.has(e.type) || (e.type === "text" && !e.containerId))).map((e) => ({ x: e.x, y: e.y, width: e.width, height: e.height }));
-  const placed: { x: number; y: number; width: number; height: number }[] = [];
-  const segmentsOf = (skip: string) =>
-    [...routed].filter(([id]) => id !== skip).flatMap(([, pts]) => pts.slice(1).map((p, i): [Point, Point] => [pts[i]!, p]));
-
-  for (const [id, pts] of routed) {
-    const arrow = elements.find((a) => a.id === id)!;
-    const text = elements.find((t) => t.type === "text" && t.containerId === id);
-    if (!text) {
-      setPolyline(arrow, pts);
-      continue;
-    }
-    const spot = chooseLabelSpot(pts, { width: text.width, height: text.height }, { obstacles, segments: segmentsOf(id), placed });
-    const withLabel = withLabelAt(pts, spot);
-    setPolyline(arrow, withLabel);
-    routed.set(id, withLabel);
-    const mid = withLabel[(withLabel.length - 1) / 2]!;
-    text.x = Math.round(mid.x - text.width / 2);
-    text.y = Math.round(mid.y - text.height / 2);
-    placed.push({ x: text.x, y: text.y, width: text.width, height: text.height });
-  }
+  placeRoutedArrows(elements, routed);
 
   return elements;
-}
-
-function setPolyline(arrow: El, pts: P[]): void {
-  const [first] = pts as [P, ...P[]];
-  arrow.x = first.x;
-  arrow.y = first.y;
-  arrow.points = pts.map((p) => [p.x - first.x, p.y - first.y]);
-  arrow.width = Math.max(...pts.map((p) => p.x)) - Math.min(...pts.map((p) => p.x));
-  arrow.height = Math.max(...pts.map((p) => p.y)) - Math.min(...pts.map((p) => p.y));
-  arrow.roundness = null;
 }

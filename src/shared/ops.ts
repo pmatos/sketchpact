@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { bind, makeArrow, makeBoundText, makeFrame, makeNote, makeShape, NODE_H, NODE_W, setArrowGeometry, sizeFor, type El } from "./factory";
+import { bind, makeArrow, makeBoundText, makeFrame, makeNote, makeShape, NODE_H, NODE_W, sizeFor, type El } from "./factory";
+import { setArrowRoute } from "./labelpos";
 import { freeSlot, obstacles, type Box } from "./layout";
 import { idOf } from "./scene";
 
@@ -193,13 +194,8 @@ function reroute(elements: readonly El[], node: El): void {
     const from = arrow.startBinding && elements.find((e) => e.id === arrow.startBinding.elementId);
     const to = arrow.endBinding && elements.find((e) => e.id === arrow.endBinding.elementId);
     if (!from || !to || (from.id !== node.id && to.id !== node.id)) continue;
-    const [start, end] = anchors(from, to) as [{ x: number; y: number }, { x: number; y: number }];
-    setArrowGeometry(arrow, start, end);
     const label = elements.find((e) => e.containerId === arrow.id);
-    if (label) {
-      label.x = (start.x + end.x) / 2 - label.width / 2;
-      label.y = (start.y + end.y) / 2 - label.height / 2;
-    }
+    setArrowRoute(arrow, anchors(from, to), label);
   }
 }
 

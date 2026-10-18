@@ -3,8 +3,9 @@ import { describe, expect, it } from "vitest";
 import { autoLayout } from "../src/shared/autolayout";
 import { boundsOf, fitScale, layoutIssues } from "../src/shared/issues";
 import { applyOps, type Op } from "../src/shared/ops";
-import { renderedLabelCenter } from "../src/shared/labelpos";
+import { placeRoutedArrows, readArrow, setArrowRoute } from "../src/shared/labelpos";
 import { extractScene } from "../src/shared/scene";
+import { arrow, boundText, rect } from "./fixtures/elements";
 
 type El = Record<string, any>;
 
@@ -109,7 +110,7 @@ describe("autoLayout", () => {
     for (const a of laid.filter((e) => e.type === "arrow")) {
       const label = laid.find((t) => t.type === "text" && t.containerId === a.id);
       if (!label) continue;
-      const rendered = renderedLabelCenter(a);
+      const rendered = readArrow(a).labelCenter!;
       expect(Math.abs(label.x + label.width / 2 - rendered.x), `${a.id} x`).toBeLessThanOrEqual(1);
       expect(Math.abs(label.y + label.height / 2 - rendered.y), `${a.id} y`).toBeLessThanOrEqual(1);
       checked++;
@@ -123,5 +124,113 @@ describe("autoLayout", () => {
     expect(summary(layoutIssues(laid))).toEqual([]);
     const b = boundsOf(laid)!;
     expect(fitScale(b)).toBeGreaterThanOrEqual(0.55);
+  });
+});
+
+describe("arrow geometry", () => {
+  it("reads odd/even rendered centers and intersects the whole route, including reversed segments", () => {
+    const odd = readArrow(arrow("e", "a", "b", {
+      x: 300, y: 100, points: [[0, 0], [-80, 40], [-200, 80]],
+    }));
+    expect(odd.points).toEqual([{ x: 300, y: 100 }, { x: 220, y: 140 }, { x: 100, y: 180 }]);
+    expect(odd.start).toEqual({ x: 300, y: 100 });
+    expect(odd.end).toEqual({ x: 100, y: 180 });
+    expect(odd.labelCenter).toEqual({ x: 220, y: 140 });
+    expect(odd.labelBounds({ width: 40, height: 20 })).toEqual({ x: 200, y: 130, width: 40, height: 20 });
+    expect(odd.intersects({ x: 155, y: 155, width: 10, height: 10 })).toBe(true);
+    expect(odd.intersects({ x: 100, y: 100, width: 10, height: 10 })).toBe(false);
+
+    const even = readArrow(arrow("e", null, null, {
+      x: -10, y: 20, points: [[0, 0], [20, 0], [20, 60], [50, 60]],
+    }));
+    expect(even.labelCenter).toEqual({ x: 10, y: 50 });
+    const empty = readArrow(arrow("empty", null, null));
+    expect(empty.start).toBeUndefined();
+    expect(empty.end).toBeUndefined();
+    expect(empty.labelCenter).toBeUndefined();
+    expect(empty.labelBounds({ width: 40, height: 20 })).toBeUndefined();
+    expect(empty.intersects({ x: 0, y: 0, width: 100, height: 100 })).toBe(false);
+  });
+
+  it("writes a full route and label together without changing identity, bindings or style", () => {
+    const edge = arrow("e", "a", "b", {
+      roundness: { type: 2 }, customData: { sketchpactId: "semantic-e", owner: "agent" },
+      boundElements: [{ id: "l", type: "text" }], endArrowhead: "arrow",
+    });
+    const label = boundText("l", "e", "label", { width: 41, height: 21 });
+    const before = structuredClone(edge);
+    setArrowRoute(edge, [{ x: 300, y: 100 }, { x: -40, y: 180 }, { x: 100, y: 20 }], label);
+    expect(edge).toEqual({ ...before, x: 300, y: 100, width: 340, height: 160, points: [[0, 0], [-340, 80], [-200, -80]] });
+    expect(label).toMatchObject({ id: "l", containerId: "e", text: "label", x: -60.5, y: 169.5 });
+
+    setArrowRoute(edge, [{ x: 0, y: 0 }, { x: 101, y: 21 }], label);
+    expect(label).toMatchObject({ x: 30, y: 0 });
+    const unchanged = structuredClone(edge);
+    expect(() => setArrowRoute(edge, [{ x: 0, y: 0 }], label)).toThrow(/at least two/);
+    expect(edge).toEqual(unchanged);
+  });
+
+  it("places routed labels around obstacles and preserves the caller's routes and endpoints", () => {
+    const edge = arrow("e", "a", "b", { roundness: { type: 2 } });
+    const label = boundText("l", "e", "label", { width: 40, height: 20 });
+    const obstacle = rect("obstacle", { x: 130, y: -20, width: 40, height: 40 });
+    const routes = new Map([["e", [{ x: 0, y: 0 }, { x: 300, y: 0 }]]]);
+    const before = structuredClone(routes);
+    placeRoutedArrows([edge, label, obstacle], routes);
+    expect(label).toMatchObject({ x: 85, y: -10 });
+    expect(edge.roundness).toBeNull();
+    expect(readArrow(edge)).toMatchObject({ start: { x: 0, y: 0 }, end: { x: 300, y: 0 }, labelCenter: { x: 105, y: 0 } });
+    expect(routes).toEqual(before);
+  });
+
+  it("keeps labels off unlabeled routes and earlier labels in the same batch", () => {
+    const edge = arrow("e", "a", "b");
+    const crossing = arrow("crossing", "c", "d");
+    const label = boundText("l", "e", "label", { width: 40, height: 20 });
+    placeRoutedArrows([edge, crossing, label], new Map([
+      ["e", [{ x: 0, y: 0 }, { x: 300, y: 0 }]],
+      ["crossing", [{ x: 150, y: -100 }, { x: 150, y: 100 }]],
+    ]));
+    expect(label).toMatchObject({ x: 100, y: -10 });
+    expect(crossing).toMatchObject({ x: 150, y: -100, width: 0, height: 200, points: [[0, 0], [0, 200]] });
+
+    const other = arrow("other", "c", "d");
+    const otherLabel = boundText("other-l", "other", "label", { width: 40, height: 20 });
+    placeRoutedArrows([edge, label, other, otherLabel], new Map([
+      ["e", [{ x: 0, y: 0 }, { x: 300, y: 0 }]],
+      ["other", [{ x: 0, y: 0 }, { x: 300, y: 0 }]],
+    ]));
+    expect(label).toMatchObject({ x: 130, y: -10 });
+    expect(otherLabel).toMatchObject({ x: 85, y: -10 });
+  });
+
+  it("balances filler vertices without changing a bent path and retains rounded ELK label coordinates", () => {
+    const edge = arrow("e", "a", "b");
+    const label = boundText("l", "e", "label", { width: 41, height: 21 });
+    const points = [{ x: 0, y: 0 }, { x: 300, y: 0 }, { x: 300, y: 40 }, { x: 400, y: 40 }];
+    placeRoutedArrows([edge, label], new Map([["e", points]]));
+    const geometry = readArrow(edge);
+    expect(geometry.start).toEqual({ x: 0, y: 0 });
+    expect(geometry.end).toEqual({ x: 400, y: 40 });
+    expect(geometry.labelCenter).toEqual({ x: 150, y: 0 });
+    expect(geometry.points).toHaveLength(7);
+    expect(geometry.points).toContainEqual({ x: 300, y: 0 });
+    expect(geometry.points).toContainEqual({ x: 300, y: 40 });
+    expect(label).toMatchObject({ x: 130, y: -10 });
+  });
+
+  it("aligns labels when connecting backwards or renaming an existing routed edge", () => {
+    const connected = build([
+      { op: "add_node", id: "a", label: "A" },
+      { op: "add_node", id: "b", label: "B" },
+      { op: "connect", from: "b", to: "a", id: "reverse", label: "HTTP" },
+    ]);
+    expect(byId(connected, "reverse#label")).toMatchObject({ x: 195, y: 30 });
+
+    const edge = arrow("e", "a", "b", { x: 300, y: 100, points: [[0, 0], [-80, 40], [-200, 80]] });
+    const result = applyOps([edge], [{ op: "rename", id: "e", label: "HTTP" }]);
+    if (!result.ok) throw new Error(JSON.stringify(result.errors));
+    expect(byId(result.elements, "e#label")).toMatchObject({ x: 200, y: 130 });
+    expect(byId(result.elements, "e").points).toEqual(edge.points);
   });
 });

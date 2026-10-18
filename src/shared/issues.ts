@@ -1,5 +1,8 @@
 import type { El } from "./factory";
 import { labelFits } from "./labels";
+import { readArrow, type Box, type Point } from "./labelpos";
+
+export type { Box } from "./labelpos";
 
 export type IssueKind = "text-overflow" | "overlap" | "edge-crosses-node" | "label-collision" | "too-large" | "detached-edge";
 
@@ -7,13 +10,6 @@ export interface LayoutIssue {
   kind: IssueKind;
   ids: string[];
   message: string;
-}
-
-export interface Box {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
 }
 
 const SHAPES = new Set(["rectangle", "ellipse", "diamond"]);
@@ -38,44 +34,16 @@ const semantic = (e: El): string => e.customData?.sketchpactId ?? e.id;
 
 export const overlaps = (a: Box, b: Box) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
-export function segmentHitsBox(p: [number, number], q: [number, number], box: Box): boolean {
-  let t0 = 0;
-  let t1 = 1;
-  const dx = q[0] - p[0];
-  const dy = q[1] - p[1];
-  const clips: [number, number][] = [
-    [-dx, p[0] - box.x],
-    [dx, box.x + box.width - p[0]],
-    [-dy, p[1] - box.y],
-    [dy, box.y + box.height - p[1]],
-  ];
-  for (const [pk, qk] of clips) {
-    if (pk === 0) {
-      if (qk < 0) return false;
-    } else {
-      const r = qk / pk;
-      if (pk < 0) {
-        if (r > t1) return false;
-        t0 = Math.max(t0, r);
-      } else {
-        if (r < t0) return false;
-        t1 = Math.min(t1, r);
-      }
-    }
-  }
-  return t0 <= t1;
-}
-
 const ATTACH_TOLERANCE = 4;
 const LABEL_CLEARANCE = 4;
 
 const grow = (b: Box, by: number): Box => ({ x: b.x - by, y: b.y - by, width: b.width + 2 * by, height: b.height + 2 * by });
 
-function onOutline(p: [number, number], b: Box): boolean {
-  const withinX = p[0] >= b.x - ATTACH_TOLERANCE && p[0] <= b.x + b.width + ATTACH_TOLERANCE;
-  const withinY = p[1] >= b.y - ATTACH_TOLERANCE && p[1] <= b.y + b.height + ATTACH_TOLERANCE;
-  const onVertical = Math.abs(p[0] - b.x) <= ATTACH_TOLERANCE || Math.abs(p[0] - (b.x + b.width)) <= ATTACH_TOLERANCE;
-  const onHorizontal = Math.abs(p[1] - b.y) <= ATTACH_TOLERANCE || Math.abs(p[1] - (b.y + b.height)) <= ATTACH_TOLERANCE;
+function onOutline(p: Point, b: Box): boolean {
+  const withinX = p.x >= b.x - ATTACH_TOLERANCE && p.x <= b.x + b.width + ATTACH_TOLERANCE;
+  const withinY = p.y >= b.y - ATTACH_TOLERANCE && p.y <= b.y + b.height + ATTACH_TOLERANCE;
+  const onVertical = Math.abs(p.x - b.x) <= ATTACH_TOLERANCE || Math.abs(p.x - (b.x + b.width)) <= ATTACH_TOLERANCE;
+  const onHorizontal = Math.abs(p.y - b.y) <= ATTACH_TOLERANCE || Math.abs(p.y - (b.y + b.height)) <= ATTACH_TOLERANCE;
   return (onVertical && withinY) || (onHorizontal && withinX);
 }
 
@@ -112,9 +80,7 @@ export function layoutIssues(elements: readonly El[]): LayoutIssue[] {
 
   for (const a of arrows) {
     const ends = new Set([a.startBinding?.elementId, a.endBinding?.elementId]);
-    const pts: [number, number][] = (a.points ?? []).map((p: number[]) => [a.x + p[0]!, a.y + p[1]!]);
-    const start = pts[0];
-    const end = pts[pts.length - 1];
+    const { start, end, intersects } = readArrow(a);
     for (const [binding, p] of [[a.startBinding, start], [a.endBinding, end]] as const) {
       const target = binding && shapes.find((s) => s.id === binding.elementId);
       if (target && p && !onOutline(p, target as Box)) {
@@ -125,7 +91,7 @@ export function layoutIssues(elements: readonly El[]): LayoutIssue[] {
     for (const s of obstacles) {
       if (ends.has(s.id)) continue;
       const box = shrink(s as Box, 1);
-      if (pts.some((p, i) => i > 0 && segmentHitsBox(pts[i - 1]!, p, box))) {
+      if (intersects(box)) {
         issues.push({ kind: "edge-crosses-node", ids: [semantic(a), semantic(s)], message: `edge "${semantic(a)}" passes through "${semantic(s)}"` });
       }
     }
@@ -139,8 +105,7 @@ export function layoutIssues(elements: readonly El[]): LayoutIssue[] {
     }
     for (const other of arrows) {
       if (other.id === l.containerId) continue;
-      const pts: [number, number][] = (other.points ?? []).map((p: number[]) => [other.x + p[0]!, other.y + p[1]!]);
-      if (pts.some((p, k) => k > 0 && segmentHitsBox(pts[k - 1]!, p, grow(l as Box, LABEL_CLEARANCE)))) {
+      if (readArrow(other).intersects(grow(l as Box, LABEL_CLEARANCE))) {
         issues.push({ kind: "label-collision", ids: [owner, semantic(other)], message: `label of edge "${owner}" sits on top of edge "${semantic(other)}"` });
       }
     }

@@ -36,5 +36,6 @@ Tools: `open_canvas`, `get_scene`, `apply_ops`, `yield_turn`, `get_diff`, `save_
 - If a batch fails, nothing was applied. Read the per-op errors, fix the ids, resend.
 - Use `get_diff` (with a turn number) if you need to see what changed since an earlier turn. Use `get_scene` if you lose track of the board.
 - Only edit through ops. Layout is automatic. Once the user drags a shape, their arrangement is respected: new shapes are placed incrementally and nothing they moved is touched.
+- Edge labels follow the arrow's rendered middle point when created, renamed or rerouted, including arrows pointing left or up. Renaming an edge keeps its route; use `{op:"layout"}` if the resulting label has a readability problem.
 - `yield_turn` refuses while the board has layout problems (text that does not fit, overlaps, arrows through shapes or notes, colliding labels, or a board too big to read at once). If it is your doing, fix it (fewer nodes, shorter labels, clusters, or `{op:"layout"}`). If it comes from the user's own arrangement, do not move their shapes: either ask them first, or yield again with `allow_layout_problems: true` and say in the message that you left their arrangement alone.
 - Keep diagrams small. Past roughly 10 nodes the whole board stops being readable on one screen; split the design or draw only the part under discussion.
