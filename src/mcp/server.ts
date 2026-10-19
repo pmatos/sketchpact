@@ -4,36 +4,26 @@ import { diffScenes } from "../shared/diff";
 import { formatDiff, formatScene } from "../shared/format";
 import { OpSchema } from "../shared/ops";
 import { extractScene } from "../shared/scene";
-import { ensureCanvas, fetchDiff, fetchElements, listAgents, postOps, registerAgent, yieldTurn } from "./canvas";
+import { createCanvasSession, fetchDiff, fetchElements, listAgents, postOps, yieldTurn, type AgentIdentity } from "./canvas";
 import { recordDecision, REQUIRED_SECTIONS } from "./decisions";
 
 const text = (t: string, isError = false) => ({ content: [{ type: "text" as const, text: t }], ...(isError ? { isError } : {}) });
 
-export interface AgentIdentity {
-  id: string;
-  label?: string;
-}
+export type { AgentIdentity } from "./canvas";
 
 export function createMcpServer(root: string, agent?: AgentIdentity): McpServer {
   const server = new McpServer({ name: "sketchpact", version: "0.1.0" });
 
-  let registered: Promise<void> | null = null;
-  const canvas = async () => {
-    const info = await ensureCanvas(root);
-    if (agent) registered ??= registerAgent(info.url, agent.id, agent.label).then(() => undefined);
-    await registered;
-    return info;
-  };
-  const me = agent?.id;
+  const canvas = createCanvasSession(root, agent);
 
   server.registerTool(
     "open_canvas",
     { description: "Start the shared whiteboard if needed and return the URL the user should open in their browser." },
     async () => {
-      const { url } = await canvas();
-      if (!agent) return text(`Canvas is running. Ask the user to open ${url}\n`);
+      const { url, agentId } = await canvas.ready();
+      if (agentId === undefined) return text(`Canvas is running. Ask the user to open ${url}\n`);
       const agents = await listAgents(url);
-      const mine = agents.find((a) => a.id === agent.id)!;
+      const mine = agents.find((a) => a.id === agentId)!;
       const scribe = agents.find((a) => a.scribe)!;
       const role = mine.scribe
         ? "you are the scribe: after the arbiter presses Agree & finish, you alone call save_decision and must record both positions and the ruling"
@@ -51,7 +41,7 @@ export function createMcpServer(root: string, agent?: AgentIdentity): McpServer 
         "Return the whiteboard as a compact semantic graph: nodes (id, label, kind, cluster), edges (from/to/label), clusters, free-standing notes, and warnings about unlabeled shapes or unbound arrows. Never pixels.",
     },
     async () => {
-      const { url } = await canvas();
+      const { url } = await canvas.ready();
       return text(formatScene(extractScene(await fetchElements(url))));
     },
   );
@@ -64,9 +54,9 @@ export function createMcpServer(root: string, agent?: AgentIdentity): McpServer 
       inputSchema: { ops: z.array(OpSchema).min(1) },
     },
     async ({ ops }) => {
-      const { url } = await canvas();
+      const { url, agentId } = await canvas.ready();
       const before = extractScene(await fetchElements(url));
-      const result = await postOps(url, ops, me);
+      const result = await postOps(url, ops, agentId);
       if (!result.ok) {
         return text(`Nothing was applied.\n${result.errors.map((e) => `op ${e.index}: ${e.message}`).join("\n")}\n`, true);
       }
@@ -91,8 +81,8 @@ export function createMcpServer(root: string, agent?: AgentIdentity): McpServer 
       },
     },
     async ({ message, allow_layout_problems }) => {
-      const { url } = await canvas();
-      const { status, body } = await yieldTurn(url, message, allow_layout_problems, me);
+      const { url, agentId } = await canvas.ready();
+      const { status, body } = await yieldTurn(url, message, allow_layout_problems, agentId);
       if (status === 422) {
         const list = (body.issues as { message: string }[]).map((i) => `  - ${i.message}`).join("\n");
         return text(`${body.error}\nProblems:\n${list}\n`, true);
@@ -110,8 +100,8 @@ export function createMcpServer(root: string, agent?: AgentIdentity): McpServer 
       inputSchema: { since_turn: z.number().int().min(0).optional() },
     },
     async ({ since_turn }) => {
-      const { url } = await canvas();
-      const { status, body } = await fetchDiff(url, since_turn, me);
+      const { url, agentId } = await canvas.ready();
+      const { status, body } = await fetchDiff(url, since_turn, agentId);
       if (status !== 200) return text(`${body.error ?? "diff failed"}\n`, true);
       return text(body.diff);
     },
@@ -124,8 +114,8 @@ export function createMcpServer(root: string, agent?: AgentIdentity): McpServer 
       inputSchema: { title: z.string().min(1), body: z.string().min(1) },
     },
     async ({ title, body }) => {
-      const { url } = await canvas();
-      const result = await recordDecision({ root, canvasUrl: url, agentId: me, title, body });
+      const { url, agentId } = await canvas.ready();
+      const result = await recordDecision({ root, canvasUrl: url, agentId, title, body });
       return result.ok ? text(`Saved ${result.record} and ${result.diagram}\n`) : text(result.error, true);
     },
   );

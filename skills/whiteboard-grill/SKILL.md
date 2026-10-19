@@ -32,6 +32,7 @@ Tools: `open_canvas`, `get_scene`, `apply_ops`, `yield_turn`, `get_diff`, `save_
 
 ## Mechanics
 
+- Every tool lazily starts or finds the canvas. If agent registration fails, the next tool call retries registration; a replacement canvas daemon requires registration again. A failed tool operation is not automatically replayed.
 - `still_waiting` is not a response. Call `yield_turn` again immediately with **no message**. Do not edit the board or write anything while waiting.
 - If a batch fails, nothing was applied. Read the per-op errors, fix the ids, resend.
 - Use `get_diff` (with a turn number) if you need to see what changed since an earlier turn. Use `get_scene` if you lose track of the board.

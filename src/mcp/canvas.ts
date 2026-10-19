@@ -10,6 +10,42 @@ export interface CanvasInfo {
   pid: number;
 }
 
+export interface AgentIdentity {
+  id: string;
+  label?: string;
+}
+
+export type ReadyCanvas = CanvasInfo & { agentId?: string };
+
+export interface CanvasSession {
+  ready(): Promise<ReadyCanvas>;
+}
+
+/** Lazily acquire the canvas and register this session's identity before use. */
+export function createCanvasSession(root: string, agent?: AgentIdentity): CanvasSession {
+  const agentId = agent?.id;
+  const label = agent?.label;
+  const registrations = new Map<string, Promise<void>>();
+  return {
+    async ready() {
+      const info = await ensureCanvas(root);
+      if (agentId !== undefined) {
+        const key = JSON.stringify([info.url, info.pid]);
+        let registered = registrations.get(key);
+        if (!registered) {
+          registered = registerAgent(info.url, agentId, label).then(() => undefined).catch((error) => {
+            registrations.delete(key);
+            throw error;
+          });
+          registrations.set(key, registered);
+        }
+        await registered;
+      }
+      return { ...info, ...(agentId === undefined ? {} : { agentId }) };
+    },
+  };
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const serverMain = resolve(dirname(fileURLToPath(import.meta.url)), "../server/main.ts");
 
