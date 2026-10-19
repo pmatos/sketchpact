@@ -1,22 +1,125 @@
 import type { El } from "./factory";
-import { overlaps, segmentHitsBox, type Box } from "./issues";
 
 export interface Point {
   x: number;
   y: number;
 }
 
-export function arrowPoints(arrow: El): Point[] {
-  return (arrow.points ?? []).map((p: number[]) => ({ x: arrow.x + p[0]!, y: arrow.y + p[1]! }));
+export interface Box extends Point {
+  width: number;
+  height: number;
 }
 
-export function renderedLabelCenter(arrow: El): Point {
-  const pts = arrowPoints(arrow);
-  if (pts.length % 2 === 1) return pts[(pts.length - 1) / 2]!;
-  const i = pts.length / 2 - 1;
-  const a = pts[i]!;
-  const b = pts[i + 1]!;
+type Size = Pick<Box, "width" | "height">;
+
+export interface ArrowGeometry {
+  readonly points: readonly Point[];
+  readonly start: Point | undefined;
+  readonly end: Point | undefined;
+  readonly labelCenter: Point | undefined;
+  labelBounds(size: Size): Box | undefined;
+  intersects(box: Box): boolean;
+}
+
+function labelCenter(points: readonly Point[]): Point | undefined {
+  if (points.length < 2) return undefined;
+  if (points.length % 2 === 1) return points[(points.length - 1) / 2]!;
+  const i = points.length / 2 - 1;
+  const a = points[i]!;
+  const b = points[i + 1]!;
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+const labelBounds = (center: Point, size: Size): Box => ({
+  x: center.x - size.width / 2,
+  y: center.y - size.height / 2,
+  width: size.width,
+  height: size.height,
+});
+
+/** Inspect the stored polyline using the same middle-point rule as Excalidraw's renderer. */
+export function readArrow(arrow: El): ArrowGeometry {
+  const points: Point[] = (arrow.points ?? []).map((p: number[]) => ({ x: arrow.x + p[0]!, y: arrow.y + p[1]! }));
+  const center = labelCenter(points);
+  return {
+    points,
+    start: points[0],
+    end: points[points.length - 1],
+    labelCenter: center,
+    labelBounds: (size) => center && labelBounds(center, size),
+    intersects: (box) => points.some((p, i) => i > 0 && segmentHitsBox([points[i - 1]!.x, points[i - 1]!.y], [p.x, p.y], box)),
+  };
+}
+
+/** Write absolute route geometry without changing identity, bindings or style. */
+export function setArrowRoute(arrow: El, points: readonly Point[], label?: El): void {
+  if (points.length < 2) throw new Error("an arrow route needs at least two points");
+  const first = points[0]!;
+  arrow.x = first.x;
+  arrow.y = first.y;
+  arrow.points = points.map((p) => [p.x - first.x, p.y - first.y]);
+  arrow.width = Math.max(...points.map((p) => p.x)) - Math.min(...points.map((p) => p.x));
+  arrow.height = Math.max(...points.map((p) => p.y)) - Math.min(...points.map((p) => p.y));
+  if (label) Object.assign(label, labelBounds(labelCenter(points)!, { width: label.width, height: label.height }));
+}
+
+/** Place an ordered batch of ELK routes, including collision-aware label encoding and rounding. */
+export function placeRoutedArrows(elements: readonly El[], routes: ReadonlyMap<string, readonly Point[]>): void {
+  const shapes = new Set(["rectangle", "ellipse", "diamond"]);
+  const obstacles = elements.filter((e) => !e.isDeleted && (shapes.has(e.type) || (e.type === "text" && !e.containerId))) as Box[];
+  const placed: Box[] = [];
+  // Later labels see earlier routes with their label vertices inserted, as in the original placement loop.
+  const routed = new Map(routes);
+  const segmentsOf = (skip: string) =>
+    [...routed].filter(([id]) => id !== skip).flatMap(([, pts]) => pts.slice(1).map((p, i): [Point, Point] => [pts[i]!, p]));
+
+  for (const [id, points] of routed) {
+    const arrow = elements.find((e) => e.id === id)!;
+    const text = elements.find((t) => t.type === "text" && t.containerId === id);
+    let path = points;
+    if (text) {
+      const spot = chooseLabelSpot(points, { width: text.width, height: text.height }, { obstacles, segments: segmentsOf(id), placed });
+      path = withLabelAt(points, spot);
+    }
+    setArrowRoute(arrow, path, text);
+    arrow.roundness = null;
+    routed.set(id, path);
+    if (text) {
+      text.x = Math.round(text.x);
+      text.y = Math.round(text.y);
+      placed.push({ x: text.x, y: text.y, width: text.width, height: text.height });
+    }
+  }
+}
+
+const overlaps = (a: Box, b: Box) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+
+function segmentHitsBox(p: [number, number], q: [number, number], box: Box): boolean {
+  let t0 = 0;
+  let t1 = 1;
+  const dx = q[0] - p[0];
+  const dy = q[1] - p[1];
+  const clips: [number, number][] = [
+    [-dx, p[0] - box.x],
+    [dx, box.x + box.width - p[0]],
+    [-dy, p[1] - box.y],
+    [dy, box.y + box.height - p[1]],
+  ];
+  for (const [pk, qk] of clips) {
+    if (pk === 0) {
+      if (qk < 0) return false;
+    } else {
+      const r = qk / pk;
+      if (pk < 0) {
+        if (r > t1) return false;
+        t0 = Math.max(t0, r);
+      } else {
+        if (r < t0) return false;
+        t1 = Math.min(t1, r);
+      }
+    }
+  }
+  return t0 <= t1;
 }
 
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -36,7 +139,7 @@ const END_MARGIN = 12;
  * (even count), ignoring the label's stored position. Insert a vertex at `target` (projected onto the path) and add
  * collinear filler vertices until that vertex is the middle one, so the label is drawn exactly where we want it.
  */
-export function withLabelAt(points: Point[], target: Point): Point[] {
+function withLabelAt(points: readonly Point[], target: Point): readonly Point[] {
   if (points.length < 2) return points;
   let best = { i: 0, p: points[0]!, d: Infinity };
   for (let i = 0; i < points.length - 1; i++) {
@@ -73,13 +176,13 @@ export function withLabelAt(points: Point[], target: Point): Point[] {
 const CLEARANCE = 4;
 const FRACTIONS = [0.5, 0.45, 0.55, 0.4, 0.6, 0.35, 0.65, 0.3, 0.7, 0.25, 0.75, 0.2, 0.8, 0.15, 0.85, 0.1, 0.9];
 
-export interface LabelContext {
+interface LabelContext {
   obstacles: Box[];
   segments: [Point, Point][];
   placed: Box[];
 }
 
-export function chooseLabelSpot(points: Point[], size: { width: number; height: number }, ctx: LabelContext): Point {
+function chooseLabelSpot(points: readonly Point[], size: Size, ctx: LabelContext): Point {
   let best: { p: Point; cost: number; len: number; off: number } | null = null;
   for (let i = 0; i < points.length - 1; i++) {
     const a = points[i]!;
@@ -108,5 +211,5 @@ export function chooseLabelSpot(points: Point[], size: { width: number; height: 
       }
     }
   }
-  return best?.p ?? renderedLabelCenter({ x: 0, y: 0, points: points.map((p) => [p.x, p.y]) });
+  return best?.p ?? labelCenter(points)!;
 }

@@ -18,6 +18,7 @@ If your launch prompt names a context file or a repository, read only what you n
 - You own one cluster (your id) and one colour. `add_node` puts nodes in your cluster automatically. You may change and remove only your own elements. You may `connect` your nodes to the opponent's (that is how you propose an interface) but never edit, rename or remove theirs.
 - In every diff, lines marked `[by <agent>]` are that agent's changes; unmarked changes are the arbiter's. In `get_scene`, `owner:` tells you who owns what.
 - Layout is automatic. `yield_turn` refuses while the board is unreadable; fix it or shrink your part (see the whiteboard-grill skill for the details).
+- Edge labels follow the arrow's rendered middle point when created, renamed or rerouted, including arrows pointing left or up. Renaming an edge keeps its route; use `{op:"layout"}` if the resulting label has a readability problem.
 
 ## Session
 
