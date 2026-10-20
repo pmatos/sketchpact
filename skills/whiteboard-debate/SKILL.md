@@ -15,6 +15,7 @@ If your launch prompt names a context file or a repository, read only what you n
 
 ## Rules of the board
 
+- Every tool lazily starts or finds the canvas and registers your identity before use. If registration fails, the next tool call retries it; a replacement canvas daemon requires registration again. A failed tool operation is not automatically replayed.
 - You own one cluster (your id) and one colour. `add_node` puts nodes in your cluster automatically. You may change and remove only your own elements. You may `connect` your nodes to the opponent's (that is how you propose an interface) but never edit, rename or remove theirs.
 - In every diff, lines marked `[by <agent>]` are that agent's changes; unmarked changes are the arbiter's. In `get_scene`, `owner:` tells you who owns what.
 - Layout is automatic. `yield_turn` refuses while the board is unreadable; fix it or shrink your part (see the whiteboard-grill skill for the details).
