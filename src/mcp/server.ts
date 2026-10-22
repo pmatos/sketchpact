@@ -1,11 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { diffScenes } from "../shared/diff";
-import { formatDiff, formatScene } from "../shared/format";
+import { formatScene } from "../shared/format";
 import { OpSchema } from "../shared/ops";
 import { extractScene } from "../shared/scene";
-import { createCanvasSession, fetchDiff, fetchElements, listAgents, postOps, yieldTurn, type AgentIdentity } from "./canvas";
+import { createCanvasSession, fetchDiff, fetchElements, listAgents, yieldTurn, type AgentIdentity } from "./canvas";
 import { recordDecision, REQUIRED_SECTIONS } from "./decisions";
+import { applySemanticEdits } from "./semanticEdits";
 
 const text = (t: string, isError = false) => ({ content: [{ type: "text" as const, text: t }], ...(isError ? { isError } : {}) });
 
@@ -54,19 +54,8 @@ export function createMcpServer(root: string, agent?: AgentIdentity): McpServer 
       inputSchema: { ops: z.array(OpSchema).min(1) },
     },
     async ({ ops }) => {
-      const { url, agentId } = await canvas.ready();
-      const before = extractScene(await fetchElements(url));
-      const result = await postOps(url, ops, agentId);
-      if (!result.ok) {
-        return text(`Nothing was applied.\n${result.errors.map((e) => `op ${e.index}: ${e.message}`).join("\n")}\n`, true);
-      }
-      const after = extractScene(await fetchElements(url));
-      const warnings = after.warnings.length ? `warnings:\n${after.warnings.map((w) => `  - ${w}`).join("\n")}\n` : "";
-      const layoutLine = { auto: "layout: auto", kept: "layout: kept your arrangement (you moved shapes, so new ones were placed incrementally)", forced: "layout: forced (whole board re-laid-out)" }[result.layout];
-      const problems = result.issues.length
-        ? `Layout problems (fix before yield_turn, e.g. with {op:"layout"} once the user agrees to a re-layout):\n${result.issues.map((i) => `  - ${i.message}`).join("\n")}\n`
-        : "";
-      return text(`Applied ${ops.length} op(s).\n${formatDiff(diffScenes(before, after))}${warnings}${layoutLine}\n${problems}`);
+      const result = await applySemanticEdits(await canvas.ready(), ops);
+      return text(result.message, !result.ok);
     },
   );
 
