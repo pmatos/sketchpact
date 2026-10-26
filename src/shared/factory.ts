@@ -1,5 +1,6 @@
 import { minimumNodeSize, prepareLabel, type PreparedText } from "./labels";
-import { readArrow, setArrowRoute } from "./labelpos";
+import { readArrow, setArrowRoute, type Point } from "./labelpos";
+import { idOf } from "./scene";
 
 export type El = Record<string, any>;
 
@@ -45,13 +46,14 @@ export function sizeFor(kind: keyof typeof SHAPE_TYPE, label: string): { width: 
   return prepareLabel(label, kind).shape;
 }
 
-export function makeShape(kind: keyof typeof SHAPE_TYPE, id: string, x: number, y: number, label = ""): El {
+export function makeNode(kind: keyof typeof SHAPE_TYPE, id: string, x: number, y: number, label: string): [node: El, label: El] {
   const { width, height } = sizeFor(kind, label);
-  return {
+  const node = {
     ...base(SHAPE_TYPE[kind], id, x, y, width, height, id),
     backgroundColor: "#a5d8ff",
     roundness: kind === "rect" ? { type: 3 } : null,
   };
+  return [node, attachLabel(node, label)];
 }
 
 function textFields(text: PreparedText, containerId: string | null): El {
@@ -66,14 +68,17 @@ function textFields(text: PreparedText, containerId: string | null): El {
   };
 }
 
-export function makeBoundText(id: string, container: El, text: string): El {
+// Appends the reciprocal reference; callers replacing a label remove the old one first.
+export function attachLabel(container: El, text: string): El {
   const prepared = (container.type === "arrow" ? prepareLabel(text, "edge") : prepareLabel(text, "rect")).text;
   const { width, height } = prepared;
   const position = container.type === "arrow" ? readArrow(container).labelBounds(prepared) : undefined;
-  return {
-    ...base("text", id, position?.x ?? container.x + (container.width - width) / 2, position?.y ?? container.y + (container.height - height) / 2, width, height),
+  const label = {
+    ...base("text", `${idOf(container)}#label`, position?.x ?? container.x + (container.width - width) / 2, position?.y ?? container.y + (container.height - height) / 2, width, height),
     ...textFields(prepared, container.id),
   };
+  bind(container, { id: label.id, type: "text" });
+  return label;
 }
 
 export function makeNote(id: string, x: number, y: number, text: string): El {
@@ -85,7 +90,8 @@ export function makeFrame(id: string, name: string, x: number, y: number, width:
   return { ...base("frame", id, x, y, width, height, id), name };
 }
 
-export function makeArrow(id: string, points: { x: number; y: number }[], from: El, to: El): El {
+// Endpoints belong to the caller's working scene and receive reciprocal arrow references.
+export function makeConnection(id: string, points: Point[], from: El, to: El, label?: string): [arrow: El] | [arrow: El, label: El] {
   const arrow = {
     ...base("arrow", id, 0, 0, 0, 0, id),
     startBinding: { elementId: from.id, focus: 0, gap: 4 },
@@ -97,9 +103,11 @@ export function makeArrow(id: string, points: { x: number; y: number }[], from: 
     roundness: { type: 2 },
   };
   setArrowRoute(arrow, points);
-  return arrow;
+  bind(from, { id, type: "arrow" });
+  bind(to, { id, type: "arrow" });
+  return label ? [arrow, attachLabel(arrow, label)] : [arrow];
 }
 
-export function bind(el: El, ref: { id: string; type: "text" | "arrow" }): void {
+function bind(el: El, ref: { id: string; type: "text" | "arrow" }): void {
   el.boundElements = [...(el.boundElements ?? []), ref];
 }

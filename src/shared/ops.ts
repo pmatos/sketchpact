@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { bind, makeArrow, makeBoundText, makeFrame, makeNote, makeShape, NODE_H, NODE_W, sizeFor, type El } from "./factory";
+import { attachLabel, makeConnection, makeFrame, makeNode, makeNote, NODE_H, NODE_W, sizeFor, type El } from "./factory";
 import { setArrowRoute } from "./labelpos";
 import { freeSlot, obstacles, type Box } from "./layout";
 import { idOf } from "./scene";
@@ -126,9 +126,7 @@ function relabel(elements: El[], container: El, text: string): void {
   }
   const old = new Set(elements.filter((e) => e.containerId === container.id).map((e) => e.id));
   dropElements(elements, old);
-  const label = makeBoundText(`${idOf(container)}#label`, container, text);
-  bind(container, { id: label.id, type: "text" });
-  elements.push(label);
+  elements.push(attachLabel(container, text));
   if (kind) reroute(elements, container);
 }
 
@@ -228,10 +226,9 @@ function apply(elements: El[], op: Op, actor?: Actor): void {
       const kind = op.kind ?? "rect";
       const size = sizeFor(kind, op.label);
       const { x, y } = freeSlot(obstacles(elements), size.width, size.height);
-      const shape = makeShape(kind, op.id, x, y, op.label);
-      const label = makeBoundText(`${op.id}#label`, shape, op.label);
-      bind(shape, { id: label.id, type: "text" });
-      elements.push(shape, label);
+      const created = makeNode(kind, op.id, x, y, op.label);
+      const [shape] = created;
+      elements.push(...created);
       if (frame) assignCluster(elements, shape, frame);
       tag(shape, actor);
       if (actor?.color) shape.backgroundColor = actor.color;
@@ -245,16 +242,10 @@ function apply(elements: El[], op: Op, actor?: Actor): void {
         if (taken(elements, op.id)) fail(`id "${op.id}" already exists`);
         id = op.id;
       } else id = freeEdgeId(elements, `${op.from}->${op.to}`);
-      const arrow = makeArrow(id, anchors(from, to), from, to);
-      bind(from, { id, type: "arrow" });
-      bind(to, { id, type: "arrow" });
+      const created = makeConnection(id, anchors(from, to), from, to, op.label);
+      const [arrow] = created;
       tag(arrow, actor);
-      elements.push(arrow);
-      if (op.label) {
-        const label = makeBoundText(`${id}#label`, arrow, op.label);
-        bind(arrow, { id: label.id, type: "text" });
-        elements.push(label);
-      }
+      elements.push(...created);
       return;
     }
     case "layout":
