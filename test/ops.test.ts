@@ -79,12 +79,18 @@ describe("applyOps: connect", () => {
   });
 
   it("keeps bindings two-way so Excalidraw drags the arrow with its nodes", () => {
-    const els = apply([], [...two(), { op: "connect", from: "a", to: "b" }]);
+    const els = apply([], [...two(), { op: "connect", from: "a", to: "b", label: "HTTP" }]);
     const a = els.find((e) => e.id === "a")!;
+    const b = els.find((e) => e.id === "b")!;
     const arrowEl = els.find((e) => e.type === "arrow")!;
-    expect(a.boundElements).toContainEqual({ id: arrowEl.id, type: "arrow" });
+    expect(a.boundElements).toEqual([{ id: "a#label", type: "text" }, { id: arrowEl.id, type: "arrow" }]);
+    expect(b.boundElements).toEqual([{ id: "b#label", type: "text" }, { id: arrowEl.id, type: "arrow" }]);
     expect(arrowEl.startBinding.elementId).toBe("a");
     expect(arrowEl.endBinding.elementId).toBe("b");
+    expect(arrowEl.boundElements).toEqual([{ id: "a->b#label", type: "text" }]);
+    for (const container of [a, b, arrowEl]) {
+      expect(els.find((e) => e.id === `${container.id}#label`)?.containerId).toBe(container.id);
+    }
   });
 
   it("supports explicit edge ids, and de-duplicates default ids", () => {
@@ -118,6 +124,30 @@ describe("applyOps: rename, remove, add_note", () => {
   it("renames a node the user drew without a label", () => {
     const els = apply([rect("r")], [{ op: "rename", id: "r", label: "Named" }]);
     expect(scene(els).nodes["r"]?.label).toBe("Named");
+  });
+
+  it("replaces labels using semantic ids while retaining raw bindings and connected arrows", () => {
+    const els = apply([
+      rect("raw-a", { customData: { sketchpactId: "a" }, boundElements: [{ id: "old-label", type: "text" }] }),
+      boundText("old-label", "raw-a", "Old"),
+      rect("raw-b", { customData: { sketchpactId: "b" } }),
+    ], [
+      { op: "connect", from: "a", to: "b", id: "edge", label: "Before" },
+      { op: "rename", id: "a", label: "After" },
+      { op: "rename", id: "edge", label: "" },
+    ]);
+    expect(els.some((e) => e.id === "old-label")).toBe(false);
+    expect(els.find((e) => e.id === "raw-a")?.boundElements).toEqual([
+      { id: "edge", type: "arrow" },
+      { id: "a#label", type: "text" },
+    ]);
+    expect(els.find((e) => e.id === "a#label")).toMatchObject({ containerId: "raw-a", originalText: "After" });
+    expect(els.find((e) => e.id === "edge")).toMatchObject({
+      startBinding: { elementId: "raw-a" }, endBinding: { elementId: "raw-b" },
+      boundElements: [{ id: "edge#label", type: "text" }],
+    });
+    expect(els.filter((e) => e.containerId === "edge")).toHaveLength(1);
+    expect(els.find((e) => e.id === "edge#label")).toMatchObject({ containerId: "edge", originalText: "" });
   });
 
   it("removes a node together with its label and connected edges", () => {
